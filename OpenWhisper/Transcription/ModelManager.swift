@@ -1,31 +1,84 @@
 import Foundation
 
-enum WhisperModel: String, CaseIterable {
+// MARK: - Model types
+
+enum ModelBackend {
+    case whisperCpp
+    case inferenceServer
+}
+
+enum TranscriptionModel: String {
+    // Whisper models (in-process via SwiftWhisper)
     case base
     case small
     case medium
+    // Parakeet model (local inference server via sherpa-onnx NeMo CTC)
+    case parakeetTDT   // kept for backward compat — maps to same model as parakeetCTC
+    case parakeetCTC
+    // Granite model (local inference server via MLX Audio)
+    case graniteSpeech
 
+    /// Models shown in the picker. parakeetTDT is hidden (legacy alias).
+    static var allCases: [TranscriptionModel] {
+        [.base, .small, .medium, .parakeetCTC, .graniteSpeech]
+    }
+
+    var backend: ModelBackend {
+        switch self {
+        case .base, .small, .medium:
+            return .whisperCpp
+        case .parakeetTDT, .parakeetCTC, .graniteSpeech:
+            return .inferenceServer
+        }
+    }
+
+    /// File name for whisper.cpp models (only meaningful for .whisperCpp backend).
     var fileName: String {
         switch self {
         case .base:   return "ggml-base.en.bin"
         case .small:  return "ggml-small.en-q5_1.bin"
         case .medium: return "ggml-medium.en-q5_0.bin"
+        default:      return ""
         }
     }
 
+    /// Download URL for whisper.cpp models.
     var downloadURL: URL {
         let base = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/"
         return URL(string: base + fileName)!
     }
 
+    /// Identifier sent to the inference server's /load endpoint.
+    var serverModelIdentifier: String {
+        rawValue
+    }
+
     var displayName: String {
         switch self {
-        case .base:   return "Base (142 MB, very fast)"
-        case .small:  return "Small (181 MB, fast)"
-        case .medium: return "Medium (514 MB, not as fast)"
+        case .base:          return "Whisper Base (142 MB, very fast)"
+        case .small:         return "Whisper Small (181 MB, fast)"
+        case .medium:        return "Whisper Medium (514 MB, moderate)"
+        case .parakeetTDT:   return "Parakeet 110M (~458 MB, very fast)"
+        case .parakeetCTC:   return "Parakeet 110M (~458 MB, very fast)"
+        case .graniteSpeech: return "Granite 4.0 1B Speech BF16 (~4.5 GB, MLX)"
         }
     }
+
+    var categoryLabel: String {
+        switch self {
+        case .base, .small, .medium:       return "Whisper (Local)"
+        case .parakeetTDT, .parakeetCTC:   return "Parakeet / NVIDIA (Server)"
+        case .graniteSpeech:               return "Granite / IBM (MLX Server)"
+        }
+    }
+
+    var requiresServer: Bool { backend == .inferenceServer }
 }
+
+// Keep the old name available for any references
+typealias WhisperModel = TranscriptionModel
+
+// MARK: - Model manager
 
 @MainActor
 @Observable
@@ -36,24 +89,31 @@ final class ModelManager {
 
     private var downloadTask: Task<Void, Never>?
     private var downloadGeneration: Int = 0
+    private let logger = TranscriptionLogger.shared
 
-    var selectedModel: WhisperModel {
+    var selectedModel: TranscriptionModel {
         didSet {
             UserDefaults.standard.set(selectedModel.rawValue, forKey: "selectedModel")
+            logger.info("Model changed to \(selectedModel.rawValue)", category: .model)
         }
     }
 
+    /// For whisper models: true when the .bin file exists on disk.
+    /// For server models: always true (server manager handles readiness).
     var isModelReady: Bool {
-        modelFileURL != nil
+        switch selectedModel.backend {
+        case .whisperCpp:
+            return modelFileURL != nil
+        case .inferenceServer:
+            return true
+        }
     }
 
     var modelFileURL: URL? {
+        guard selectedModel.backend == .whisperCpp else { return nil }
         guard let dir = modelsDirectory else { return nil }
         let path = dir.appendingPathComponent(selectedModel.fileName)
-        if FileManager.default.fileExists(atPath: path.path) {
-            return path
-        }
-        return nil
+        return FileManager.default.fileExists(atPath: path.path) ? path : nil
     }
 
     private var modelsDirectory: URL? {
@@ -69,42 +129,51 @@ final class ModelManager {
 
     init() {
         let stored = UserDefaults.standard.string(forKey: "selectedModel") ?? ""
-        self.selectedModel = WhisperModel(rawValue: stored) ?? .small
+        self.selectedModel = TranscriptionModel(rawValue: stored) ?? .small
+        logger.info("ModelManager initialized with model: \(selectedModel.rawValue)", category: .model)
     }
 
     func ensureModelAvailable() {
-        if !isModelReady {
+        guard selectedModel.backend == .whisperCpp else { return }
+        if modelFileURL == nil {
             startDownload()
         }
     }
 
-    func selectModel(_ model: WhisperModel) {
+    func selectModel(_ model: TranscriptionModel) {
         downloadTask?.cancel()
         downloadTask = nil
         downloadGeneration &+= 1
         selectedModel = model
-        if !isModelReady {
-            downloadTask = Task {
-                await downloadModel()
+
+        if model.backend == .whisperCpp {
+            if modelFileURL == nil {
+                logger.info("Starting download for \(model.fileName)", category: .download)
+                downloadTask = Task { await downloadModel() }
+            } else {
+                isDownloading = false
+                downloadProgress = 1.0
             }
         } else {
+            // Server models — server manager handles setup separately
             isDownloading = false
-            downloadProgress = 1.0
+            downloadProgress = 0
         }
     }
 
     func startDownload() {
+        guard selectedModel.backend == .whisperCpp else { return }
         downloadTask?.cancel()
         downloadTask = nil
         downloadGeneration &+= 1
-        downloadTask = Task {
-            await downloadModel()
-        }
+        logger.info("Starting download for \(selectedModel.fileName)", category: .download)
+        downloadTask = Task { await downloadModel() }
     }
 
     func downloadModel() async {
         guard let modelsDir = modelsDirectory else {
             errorMessage = "Cannot determine models directory"
+            logger.error("Cannot determine models directory", category: .download)
             return
         }
 
@@ -112,6 +181,7 @@ final class ModelManager {
             try FileManager.default.createDirectory(at: modelsDir, withIntermediateDirectories: true)
         } catch {
             errorMessage = "Cannot create models directory: \(error.localizedDescription)"
+            logger.error("Cannot create models directory: \(error.localizedDescription)", category: .download)
             return
         }
 
@@ -122,13 +192,14 @@ final class ModelManager {
         errorMessage = nil
 
         let generation = self.downloadGeneration
+        logger.info("Connecting to \(selectedModel.downloadURL)...", category: .download)
 
         do {
             try Task.checkCancellation()
 
             let config = URLSessionConfiguration.default
-            config.timeoutIntervalForRequest = 300    // 5 min per chunk
-            config.timeoutIntervalForResource = 3600  // 1 hour total
+            config.timeoutIntervalForRequest = 300
+            config.timeoutIntervalForResource = 3600
             let delegate = DownloadDelegate { [weak self] progress in
                 Task { @MainActor in
                     guard let self, self.downloadGeneration == generation else { return }
@@ -147,6 +218,8 @@ final class ModelManager {
 
             guard let httpResponse = response as? HTTPURLResponse,
                   (200...299).contains(httpResponse.statusCode) else {
+                let code = (response as? HTTPURLResponse)?.statusCode ?? -1
+                logger.error("Download failed: HTTP \(code)", category: .download)
                 throw URLError(.badServerResponse)
             }
 
@@ -158,17 +231,21 @@ final class ModelManager {
             guard self.downloadGeneration == generation else { return }
             isDownloading = false
             downloadProgress = 1.0
+            logger.info("Download complete: \(selectedModel.fileName)", category: .download)
         } catch is CancellationError {
-            // Don't reset isDownloading — the replacement download will take over
+            logger.info("Download cancelled", category: .download)
         } catch let error as URLError where error.code == .cancelled {
-            // Don't reset isDownloading — the replacement download will take over
+            logger.info("Download cancelled", category: .download)
         } catch {
             guard self.downloadGeneration == generation else { return }
             isDownloading = false
             errorMessage = "Download failed: \(error.localizedDescription)"
+            logger.error("Download failed: \(error.localizedDescription)", category: .download)
         }
     }
 }
+
+// MARK: - Download delegate
 
 private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     let onProgress: (Double) -> Void
@@ -194,7 +271,6 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
 
     func urlSession(_ session: URLSession, downloadTask: URLSessionDownloadTask,
                     didFinishDownloadingTo location: URL) {
-        // Copy to a stable temp location — the file at `location` is deleted when this method returns
         let tempFile = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".bin")
         do {
             try FileManager.default.copyItem(at: location, to: tempFile)

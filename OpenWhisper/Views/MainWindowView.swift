@@ -5,12 +5,14 @@ enum AppTab: String, CaseIterable {
     case home = "Home"
     case settings = "Settings"
     case history = "History"
+    case logs = "Logs"
 
     var icon: String {
         switch self {
         case .home: return "house"
         case .settings: return "gear"
         case .history: return "clock"
+        case .logs: return "doc.text"
         }
     }
 }
@@ -39,6 +41,8 @@ struct MainWindowView: View {
                         SettingsTabView(appState: appState)
                     case .history:
                         HistoryView(historyStore: appState.historyStore)
+                    case .logs:
+                        LogsView(logger: TranscriptionLogger.shared)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -59,7 +63,10 @@ struct MainWindowView: View {
 
                 Spacer()
 
-                if !appState.modelManager.isModelReady {
+                if appState.modelManager.selectedModel.requiresServer {
+                    // Server model status
+                    serverStatusIndicator
+                } else if !appState.modelManager.isModelReady {
                     if appState.modelManager.isDownloading {
                         ProgressView()
                             .controlSize(.mini)
@@ -85,6 +92,37 @@ struct MainWindowView: View {
         .onAppear {
             micAuthorized = Permissions.isMicrophoneAuthorized
             accessibilityGranted = Permissions.isAccessibilityGranted
+        }
+    }
+
+    @ViewBuilder
+    private var serverStatusIndicator: some View {
+        let state = appState.serverManager.state
+        switch state {
+        case .running:
+            Image(systemName: "server.rack")
+                .font(.caption2)
+                .foregroundStyle(.green)
+            Text("Server")
+                .font(.caption2)
+                .foregroundStyle(.green)
+        case .error:
+            Image(systemName: "exclamationmark.triangle.fill")
+                .font(.caption2)
+                .foregroundStyle(.red)
+            Text("Server error")
+                .font(.caption2)
+                .foregroundStyle(.red)
+        case .stopped:
+            Text("Server stopped")
+                .font(.caption2)
+                .foregroundStyle(.orange)
+        default:
+            ProgressView()
+                .controlSize(.mini)
+            Text(state.displayString)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
         }
     }
 
@@ -133,14 +171,7 @@ struct MainWindowView: View {
                         }
 
                         if !accessibilityGranted {
-                            permissionBanner(
-                                icon: "lock.shield",
-                                title: "Accessibility Access Required",
-                                description: "Accessibility access is required to paste transcribed text and for the global hotkey to work in all apps.",
-                                buttonLabel: "Open Accessibility Settings"
-                            ) {
-                                Permissions.openAccessibilitySettings()
-                            }
+                            accessibilityBanner
                         }
                     }
                     .padding(.horizontal, 20)
@@ -181,6 +212,58 @@ struct MainWindowView: View {
                 .padding(.vertical, 14)
             }
         }
+    }
+
+    private var accessibilityBanner: some View {
+        HStack(spacing: 12) {
+            Image(systemName: "lock.shield")
+                .font(.title2)
+                .foregroundStyle(.orange)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Accessibility Access Required")
+                    .font(.subheadline.weight(.semibold))
+                Text("Accessibility access is required to paste transcribed text and for the global hotkey to work in all apps.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 6) {
+                    Button("Open Accessibility Settings") {
+                        Permissions.openAccessibilitySettings()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(.caption)
+
+                    Button("Reveal App in Finder") {
+                        Permissions.revealAppInFinder()
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .font(.caption)
+                }
+
+                HStack(spacing: 6) {
+                    Button("Reset & Re-Prompt") {
+                        Permissions.resetAndRePromptAccessibility()
+                    }
+                    .controlSize(.small)
+                    .font(.caption)
+                    .help("Clears a stale Accessibility entry (e.g. after a rebuild) and re-prompts.")
+
+                    Text(Permissions.appBundlePath)
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                }
+            }
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.orange.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
     }
 
     private func permissionBanner(

@@ -1,4 +1,6 @@
-# OpenWhisper — Agent Guide
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
 ## What This Is
 
@@ -7,6 +9,10 @@ macOS menu bar voice-to-text app using local whisper.cpp. Non-sandboxed, SwiftUI
 ## Build
 
 ```bash
+# Quick build (setup + build):
+scripts/setup.sh && scripts/build.sh
+
+# Or manually:
 brew install xcodegen
 xcodegen generate
 xcodebuild -scheme OpenWhisper -configuration Debug -derivedDataPath .build build \
@@ -16,6 +22,8 @@ xcodebuild -scheme OpenWhisper -configuration Debug -derivedDataPath .build buil
 The Xcode project (`*.xcodeproj`) is gitignored — always regenerate with `xcodegen generate` before building.
 
 **Always pass `CODE_SIGN_IDENTITY="Apple Development" CODE_SIGN_STYLE=Manual DEVELOPMENT_TEAM=T2ZTUY8F2X`** when building debug builds. These override the ad-hoc signing in `project.yml` so that macOS preserves Microphone and Accessibility permissions across rebuilds. Without them, every rebuild invalidates granted permissions.
+
+There are no tests in this project.
 
 ## Architecture
 
@@ -47,10 +55,6 @@ Key files:
 - `project.yml` uses `CODE_SIGN_IDENTITY: "-"` (ad-hoc) so anyone can clone and build
 - CI overrides with `Developer ID Application` at build time via xcodebuild args
 - No `DEVELOPMENT_TEAM` or `CODE_SIGN_STYLE` in project.yml — CI provides these
-- To build locally with a dev cert (persists Accessibility/Microphone permissions across rebuilds):
-  ```bash
-  xcodebuild ... CODE_SIGN_IDENTITY="Apple Development" CODE_SIGN_STYLE=Manual
-  ```
 - Ad-hoc signed builds lose granted permissions every rebuild — use a real cert during development
 
 ### Non-Sandboxed
@@ -60,7 +64,7 @@ Key files:
 
 ### Sparkle Auto-Updates
 - `SPUStandardUpdaterController` is created in `OpenWhisperApp.swift`
-- `SUPublicEDKey` in project.yml is `TO_BE_GENERATED` — needs one-time `generate_keys` run
+- `SUPublicEDKey` in project.yml is set — `generate_keys` from Sparkle was already run
 - Menu bar has "Check for Updates..." item
 
 ### ShortcutRecorder (Custom)
@@ -80,9 +84,14 @@ Key files:
 - Uses `SMAppService.mainApp` (ServiceManagement framework, macOS 13+)
 - Toggle in Settings reverts on failure
 
+### Build Scripts
+- `scripts/setup.sh` — Runs `xcodegen generate`, copies SPM package cache from main worktree if in a git worktree
+- `scripts/build.sh` — Runs debug build with proper code signing flags
+- `scripts/rm_models.sh` — Removes downloaded whisper models from `~/Library/Application Support/OpenWhisper/Models`
+
 ## CI
 
-- `.github/workflows/build.yml` — CI build on push/PR to main
+- `.github/workflows/build.yml` — CI build on push/PR to main (macOS 15, uses `SKIP_MODEL_DOWNLOAD=1` env var)
 
 ## Releasing
 
