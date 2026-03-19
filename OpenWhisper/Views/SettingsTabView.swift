@@ -14,8 +14,31 @@ struct SettingsTabView: View {
                 LabeledContent("Toggle Recording") {
                     ShortcutRecorder(name: .toggleRecording)
                 }
+                LabeledContent("Push-to-Talk") {
+                    ShortcutRecorder(name: .pushToTalkRecording)
+                }
                 LabeledContent("Cancel Recording") {
                     ShortcutRecorder(name: .cancelRecording)
+                }
+            }
+
+            Section("Overlay") {
+                Toggle("Show floating pill when idle", isOn: Binding(
+                    get: { appState.showIdlePill },
+                    set: { appState.setShowIdlePill($0) }
+                ))
+            }
+
+            Section("Microphone") {
+                let devices = AudioRecorder.availableInputDevices()
+                Picker("Input Device", selection: Binding(
+                    get: { appState.audioRecorder.selectedDeviceUID ?? "" },
+                    set: { appState.audioRecorder.selectedDeviceUID = $0.isEmpty ? nil : $0 }
+                )) {
+                    Text("System Default").tag("")
+                    ForEach(devices) { device in
+                        Text(device.name).tag(device.uid)
+                    }
                 }
             }
 
@@ -61,7 +84,6 @@ struct SettingsTabView: View {
                     }
                 }
 
-                // App location — helps identify the right entry in System Settings
                 VStack(alignment: .leading, spacing: 4) {
                     Text("App location:")
                         .font(.caption)
@@ -95,6 +117,10 @@ struct SettingsTabView: View {
         .onAppear {
             micAuthorized = Permissions.isMicrophoneAuthorized
             accessibilityGranted = Permissions.isAccessibilityGranted
+            appState.snapshotHotkeySettings()
+        }
+        .onDisappear {
+            appState.acceptHotkeyChanges()
         }
     }
 
@@ -105,7 +131,6 @@ struct SettingsTabView: View {
         let model = appState.modelManager.selectedModel
 
         if model.backend == .whisperCpp {
-            // Whisper model — show download status
             if appState.modelManager.isModelReady {
                 Label("Model ready", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
@@ -134,7 +159,6 @@ struct SettingsTabView: View {
                 }
             }
         } else {
-            // Server model — show brief info
             HStack(spacing: 4) {
                 Image(systemName: "server.rack")
                     .foregroundStyle(.secondary)

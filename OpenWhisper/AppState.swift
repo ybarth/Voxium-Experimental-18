@@ -11,6 +11,9 @@ final class AppState {
     @ObservationIgnored
     @AppStorage("systemPrompt") var systemPrompt: String = ""
 
+    @ObservationIgnored
+    @AppStorage("showIdlePill") var showIdlePill: Bool = true
+
     let audioRecorder = AudioRecorder()
     let transcriptionService = TranscriptionService()
     let pasteService = PasteService()
@@ -24,14 +27,50 @@ final class AppState {
     /// Whether the server is being set up in the background after selecting a server model.
     var isSettingUpServer = false
 
-    init() {
-        // Create overlay controller after all properties are initialized
-        overlayController = OverlayController(overlayState: overlayState, audioRecorder: audioRecorder)
+    /// Set this to navigate the main window to a specific tab.
+    var desiredTab: AppTab?
 
+    // MARK: - Settings confirmation state
+
+    private var originalToggleShortcut: KeyboardShortcuts.Shortcut?
+    private var originalCancelShortcut: KeyboardShortcuts.Shortcut?
+    private var originalPTTShortcut: KeyboardShortcuts.Shortcut?
+    private var hasSnapshot = false
+
+    var hasUnsavedHotkeyChanges: Bool {
+        guard hasSnapshot else { return false }
+        let currentToggle = KeyboardShortcuts.getShortcut(for: .toggleRecording)
+        let currentCancel = KeyboardShortcuts.getShortcut(for: .cancelRecording)
+        let currentPTT = KeyboardShortcuts.getShortcut(for: .pushToTalkRecording)
+        return currentToggle != originalToggleShortcut
+            || currentCancel != originalCancelShortcut
+            || currentPTT != originalPTTShortcut
+    }
+
+    init() {
+        overlayController = OverlayController(appState: self)
+
+        // Register both toggle and push-to-talk hotkeys
         KeyboardShortcuts.onKeyUp(for: .toggleRecording) { [weak self] in
             guard let self else { return }
             Task { @MainActor in
                 await self.toggleRecording()
+            }
+        }
+
+        KeyboardShortcuts.onKeyDown(for: .pushToTalkRecording) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                guard !self.isRecording else { return }
+                self.startRecording()
+            }
+        }
+
+        KeyboardShortcuts.onKeyUp(for: .pushToTalkRecording) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                guard self.isRecording else { return }
+                await self.stopRecordingAndTranscribe()
             }
         }
 
@@ -43,6 +82,11 @@ final class AppState {
         }
 
         syncCancelRecordingHotkey()
+
+        // Show idle pill on launch
+        if showIdlePill {
+            overlayController?.showIdlePill()
+        }
 
         // Auto-download whisper model on first launch
         modelManager.ensureModelAvailable()
@@ -69,45 +113,101 @@ final class AppState {
         isRecording = false
         statusMessage = "Ready"
         overlayState.phase = .cancelled
+        overlayController?.updateForPhase(.cancelled)
         syncCancelRecordingHotkey()
         logger.info("Recording cancelled by user", category: .transcription)
 
-        // Show "Recording Cancelled" briefly, then dismiss
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
-            self?.overlayState.phase = .hidden
-            self?.overlayController?.dismiss()
+            guard let self else { return }
+            if self.showIdlePill {
+                self.overlayState.phase = .idle
+                self.overlayController?.updateForPhase(.idle)
+            } else {
+                self.overlayState.phase = .hidden
+                self.overlayController?.updateForPhase(.hidden)
+            }
         }
     }
 
-    /// Called when the user switches models in settings.
     func onModelChanged(_ model: TranscriptionModel) {
         modelManager.selectModel(model)
 
         if model.requiresServer {
             startServerInBackground(for: model)
         } else {
-            // Stop the server if switching to a whisper model
             if serverManager.isRunning {
                 serverManager.stop()
             }
         }
     }
 
+    func setShowIdlePill(_ show: Bool) {
+        showIdlePill = show
+        if show {
+            if overlayState.phase == .hidden {
+                overlayState.phase = .idle
+                overlayController?.updateForPhase(.idle)
+            }
+        } else {
+            if overlayState.phase == .idle {
+                overlayState.phase = .hidden
+                overlayController?.updateForPhase(.hidden)
+            }
+        }
+    }
+
+    /// Navigate the main window to a specific tab and bring it forward.
+    func showTab(_ tab: AppTab) {
+        desiredTab = tab
+        Self.showMainWindow()
+    }
+
+    // MARK: - Settings confirmation
+
+    func snapshotHotkeySettings() {
+        originalToggleShortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
+        originalCancelShortcut = KeyboardShortcuts.getShortcut(for: .cancelRecording)
+        originalPTTShortcut = KeyboardShortcuts.getShortcut(for: .pushToTalkRecording)
+        hasSnapshot = true
+    }
+
+    func revertHotkeyChanges() {
+        guard hasSnapshot else { return }
+        KeyboardShortcuts.setShortcut(originalToggleShortcut, for: .toggleRecording)
+        KeyboardShortcuts.setShortcut(originalCancelShortcut, for: .cancelRecording)
+        KeyboardShortcuts.setShortcut(originalPTTShortcut, for: .pushToTalkRecording)
+        hasSnapshot = false
+    }
+
+    func acceptHotkeyChanges() {
+        if hasSnapshot {
+            originalToggleShortcut = KeyboardShortcuts.getShortcut(for: .toggleRecording)
+            originalCancelShortcut = KeyboardShortcuts.getShortcut(for: .cancelRecording)
+            originalPTTShortcut = KeyboardShortcuts.getShortcut(for: .pushToTalkRecording)
+        }
+        hasSnapshot = false
+    }
+
     // MARK: - Recording
 
-    private func startRecording() {
+    func startRecording() {
         let model = modelManager.selectedModel
 
-        // Check model/server readiness
         if model.backend == .whisperCpp {
             guard modelManager.isModelReady else {
                 if modelManager.isDownloading {
                     overlayState.phase = .modelDownloading
-                    overlayController?.show()
+                    overlayController?.updateForPhase(.modelDownloading)
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
-                        guard self?.overlayState.phase == .modelDownloading else { return }
-                        self?.overlayState.phase = .hidden
-                        self?.overlayController?.dismiss()
+                        guard let self else { return }
+                        guard self.overlayState.phase == .modelDownloading else { return }
+                        if self.showIdlePill {
+                            self.overlayState.phase = .idle
+                            self.overlayController?.updateForPhase(.idle)
+                        } else {
+                            self.overlayState.phase = .hidden
+                            self.overlayController?.updateForPhase(.hidden)
+                        }
                     }
                 } else {
                     statusMessage = "Model not downloaded yet"
@@ -139,7 +239,7 @@ final class AppState {
             isRecording = true
             statusMessage = "Recording..."
             overlayState.phase = .recording
-            overlayController?.show()
+            overlayController?.updateForPhase(.recording)
             syncCancelRecordingHotkey()
             logger.info("Recording started", category: .transcription)
         } catch {
@@ -150,15 +250,20 @@ final class AppState {
 
     // MARK: - Transcription
 
-    private func stopRecordingAndTranscribe() async {
+    func stopRecordingAndTranscribe() async {
         let samples = audioRecorder.stopRecording()
         isRecording = false
         syncCancelRecordingHotkey()
 
         guard !samples.isEmpty else {
             statusMessage = "No audio captured"
-            overlayState.phase = .hidden
-            overlayController?.dismiss()
+            if showIdlePill {
+                overlayState.phase = .idle
+                overlayController?.updateForPhase(.idle)
+            } else {
+                overlayState.phase = .hidden
+                overlayController?.updateForPhase(.hidden)
+            }
             logger.info("No audio captured", category: .transcription)
             return
         }
@@ -166,6 +271,7 @@ final class AppState {
         isTranscribing = true
         statusMessage = "Transcribing..."
         overlayState.phase = .transcribing
+        overlayController?.updateForPhase(.transcribing)
         logger.info("Transcribing \(samples.count) samples...", category: .transcription)
 
         do {
@@ -175,8 +281,13 @@ final class AppState {
                 guard let modelURL = modelManager.modelFileURL else {
                     statusMessage = "Model not available"
                     isTranscribing = false
-                    overlayState.phase = .hidden
-                    overlayController?.dismiss()
+                    if showIdlePill {
+                        overlayState.phase = .idle
+                        overlayController?.updateForPhase(.idle)
+                    } else {
+                        overlayState.phase = .hidden
+                        overlayController?.updateForPhase(.hidden)
+                    }
                     return
                 }
                 text = try await transcriptionService.transcribe(
@@ -204,8 +315,13 @@ final class AppState {
         }
 
         isTranscribing = false
-        overlayState.phase = .hidden
-        overlayController?.dismiss()
+        if showIdlePill {
+            overlayState.phase = .idle
+            overlayController?.updateForPhase(.idle)
+        } else {
+            overlayState.phase = .hidden
+            overlayController?.updateForPhase(.hidden)
+        }
     }
 
     // MARK: - Server lifecycle

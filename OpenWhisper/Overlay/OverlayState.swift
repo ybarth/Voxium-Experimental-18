@@ -5,6 +5,7 @@ import Foundation
 final class OverlayState {
     enum Phase {
         case hidden
+        case idle
         case recording
         case transcribing
         case cancelled

@@ -6,6 +6,8 @@ extension KeyboardShortcuts.Name {
         default: .init(.quote, modifiers: [.command])
     )
 
+    static let pushToTalkRecording = Self("pushToTalkRecording")
+
     static let cancelRecording = Self(
         "cancelRecording",
         default: .init(.escape)

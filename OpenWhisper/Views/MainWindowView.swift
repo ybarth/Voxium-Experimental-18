@@ -20,15 +20,32 @@ enum AppTab: String, CaseIterable {
 struct MainWindowView: View {
     let appState: AppState
     @State private var selectedTab: AppTab = .home
+    @State private var pendingTab: AppTab?
+    @State private var showUnsavedAlert = false
     @State private var micAuthorized = Permissions.isMicrophoneAuthorized
     @State private var accessibilityGranted = Permissions.isAccessibilityGranted
 
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
+    /// Binding that intercepts tab changes away from settings to check for unsaved hotkey changes.
+    private var tabSelection: Binding<AppTab> {
+        Binding(
+            get: { selectedTab },
+            set: { newTab in
+                if selectedTab == .settings && newTab != .settings && appState.hasUnsavedHotkeyChanges {
+                    pendingTab = newTab
+                    showUnsavedAlert = true
+                } else {
+                    selectedTab = newTab
+                }
+            }
+        )
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             NavigationSplitView {
-                List(AppTab.allCases, id: \.self, selection: $selectedTab) { tab in
+                List(AppTab.allCases, id: \.self, selection: tabSelection) { tab in
                     Label(tab.rawValue, systemImage: tab.icon)
                 }
                 .navigationSplitViewColumnWidth(min: 150, ideal: 160, max: 180)
@@ -92,6 +109,39 @@ struct MainWindowView: View {
         .onAppear {
             micAuthorized = Permissions.isMicrophoneAuthorized
             accessibilityGranted = Permissions.isAccessibilityGranted
+        }
+        .onChange(of: appState.desiredTab) { _, newTab in
+            if let newTab {
+                selectedTab = newTab
+                appState.desiredTab = nil
+            }
+        }
+        .onDisappear {
+            // Auto-accept hotkey changes when window closes
+            if selectedTab == .settings {
+                appState.acceptHotkeyChanges()
+            }
+        }
+        .alert("Unsaved Hotkey Changes", isPresented: $showUnsavedAlert) {
+            Button("Keep Changes") {
+                appState.acceptHotkeyChanges()
+                if let tab = pendingTab {
+                    selectedTab = tab
+                    pendingTab = nil
+                }
+            }
+            Button("Revert") {
+                appState.revertHotkeyChanges()
+                if let tab = pendingTab {
+                    selectedTab = tab
+                    pendingTab = nil
+                }
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTab = nil
+            }
+        } message: {
+            Text("You have unsaved hotkey changes. Would you like to keep or revert them?")
         }
     }
 

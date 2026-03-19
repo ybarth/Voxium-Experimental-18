@@ -1,14 +1,18 @@
 import SwiftUI
 
 struct RecordingOverlayContent: View {
-    let overlayState: OverlayState
-    let audioRecorder: AudioRecorder
+    let appState: AppState
+
+    private var overlayState: OverlayState { appState.overlayState }
+    private var audioRecorder: AudioRecorder { appState.audioRecorder }
 
     var body: some View {
         Group {
             switch overlayState.phase {
             case .hidden:
                 EmptyView()
+            case .idle:
+                idleView
             case .recording:
                 recordingView
             case .transcribing:
@@ -22,11 +26,72 @@ struct RecordingOverlayContent: View {
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .animation(.spring(duration: 0.35, bounce: 0.2), value: overlayState.phase)
     }
+
+    // MARK: - Idle pill with context menu
+
+    private var idleView: some View {
+        Image(systemName: "mic.fill")
+            .font(.system(size: 16))
+            .foregroundStyle(.white.opacity(0.6))
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background {
+                Capsule()
+                    .fill(.ultraThinMaterial)
+                    .environment(\.colorScheme, .dark)
+            }
+            .contextMenu {
+                if let lastEntry = appState.historyStore.entries.first {
+                    Button("Paste Last Dictation") {
+                        appState.pasteService.paste(text: lastEntry.text)
+                    }
+                    Divider()
+                }
+
+                Menu("Model") {
+                    Picker("Model", selection: Binding(
+                        get: { appState.modelManager.selectedModel },
+                        set: { appState.onModelChanged($0) }
+                    )) {
+                        ForEach(TranscriptionModel.allCases, id: \.self) { model in
+                            Text(model.displayName).tag(model)
+                        }
+                    }
+                }
+
+                Menu("Microphone") {
+                    let devices = AudioRecorder.availableInputDevices()
+                    let selectedUID = appState.audioRecorder.selectedDeviceUID ?? ""
+
+                    Picker("Microphone", selection: Binding(
+                        get: { selectedUID },
+                        set: { appState.audioRecorder.selectedDeviceUID = $0.isEmpty ? nil : $0 }
+                    )) {
+                        Text("System Default").tag("")
+                        Divider()
+                        ForEach(devices) { device in
+                            Text(device.name).tag(device.uid)
+                        }
+                    }
+                }
+
+                Divider()
+
+                Button("Settings") {
+                    appState.showTab(.settings)
+                }
+
+                Button("History") {
+                    appState.showTab(.history)
+                }
+            }
+    }
+
+    // MARK: - Active state views
 
     private var recordingView: some View {
         HStack(spacing: 12) {
-            // Pulsing red dot
             Circle()
                 .fill(.red)
                 .frame(width: 10, height: 10)
