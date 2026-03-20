@@ -135,16 +135,29 @@ final class EchoModeController {
 
         textView.textColor = .labelColor
         textView.string = entry.text
-        textView.selectAll(nil)
 
-        // Make panel key and text view first responder so Speechify can read selected text
+        // Save the currently active app so we can restore focus after triggering Speechify
+        let previousApp = NSWorkspace.shared.frontmostApplication
+
+        // Activate our app so Speechify can find selected text via Accessibility API.
+        // The nonactivatingPanel style means our panel is key but the app isn't active —
+        // Speechify only reads selected text from the active application.
+        NSApplication.shared.activate(ignoringOtherApps: true)
         panel.makeKey()
         panel.makeFirstResponder(textView)
+        textView.selectAll(nil)
 
-        // Wait for Accessibility API to register the selection, then trigger Speechify
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+        // Wait for activation + Accessibility API to register, then trigger Speechify
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             self?.speechifyService.triggerRead()
             self?.logger.info("Echo Mode: triggered Speechify read for entry \(entry.id)", category: .tts)
+
+            // Restore focus to the previous app after Speechify has grabbed the selection
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                    previousApp.activate()
+                }
+            }
         }
     }
 
