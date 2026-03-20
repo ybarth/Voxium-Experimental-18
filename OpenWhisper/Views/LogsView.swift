@@ -39,6 +39,17 @@ struct LogsView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
+                Button("Copy All") {
+                    let text = filteredEntries.map { entry in
+                        let time = entry.timestamp.formatted(.dateTime.hour().minute().second())
+                        return "\(time) [\(entry.category.rawValue)] \(entry.levelString) \(entry.message)"
+                    }.joined(separator: "\n")
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(text, forType: .string)
+                }
+                .controlSize(.small)
+                .help("Copy all visible log entries to clipboard")
+
                 Button("Clear") {
                     logger.clearEntries()
                 }
@@ -89,10 +100,22 @@ struct LogsView: View {
                 .frame(width: 40, alignment: .leading)
 
             Text(entry.message)
-                .lineLimit(3)
+                .lineLimit(nil)
                 .textSelection(.enabled)
         }
         .padding(.vertical, 1)
+        .contextMenu {
+            Button("Copy Message") {
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(entry.message, forType: .string)
+            }
+            Button("Copy Full Line") {
+                let time = entry.timestamp.formatted(.dateTime.hour().minute().second())
+                let line = "\(time) [\(entry.category.rawValue)] \(entry.levelString) \(entry.message)"
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString(line, forType: .string)
+            }
+        }
     }
 
     private func categoryColor(_ cat: LogCategory) -> Color {
