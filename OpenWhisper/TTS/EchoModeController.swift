@@ -144,18 +144,16 @@ final class EchoModeController {
         panel.makeFirstResponder(textView)
         textView.selectAll(nil)
 
-        // Wait for activation + Accessibility API to register the selection,
-        // then trigger Speechify and immediately restore focus.
-        // CGEvent.post() is synchronous — once it returns, the events are
-        // in the system queue and Speechify will process them regardless
-        // of which app is active.
+        // Wait for activation + Accessibility API to register the selection
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             self?.speechifyService.triggerRead()
             self?.logger.info("Echo Mode: triggered Speechify read for entry \(entry.id)", category: .tts)
 
-            // Restore focus now — Speechify has the events queued
-            if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-                previousApp.activate()
+            // Wait 900ms for Speechify to process the key event before restoring focus
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.9) {
+                if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                    previousApp.activate()
+                }
             }
         }
     }
