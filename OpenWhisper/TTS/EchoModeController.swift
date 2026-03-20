@@ -136,7 +136,6 @@ final class EchoModeController {
         textView.textColor = .labelColor
         textView.string = entry.text
 
-        // Save the currently active app to restore focus after Speechify starts reading
         let previousApp = NSWorkspace.shared.frontmostApplication
 
         // Activate our app so Speechify can find selected text via Accessibility API.
@@ -145,16 +144,18 @@ final class EchoModeController {
         panel.makeFirstResponder(textView)
         textView.selectAll(nil)
 
-        // Wait for activation + Accessibility API to register, then trigger Speechify
+        // Wait for activation + Accessibility API to register the selection,
+        // then trigger Speechify and immediately restore focus.
+        // CGEvent.post() is synchronous — once it returns, the events are
+        // in the system queue and Speechify will process them regardless
+        // of which app is active.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
             self?.speechifyService.triggerRead()
             self?.logger.info("Echo Mode: triggered Speechify read for entry \(entry.id)", category: .tts)
 
-            // Restore focus to the previous app after Speechify has started reading
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
-                    previousApp.activate()
-                }
+            // Restore focus now — Speechify has the events queued
+            if let previousApp, previousApp.bundleIdentifier != Bundle.main.bundleIdentifier {
+                previousApp.activate()
             }
         }
     }
