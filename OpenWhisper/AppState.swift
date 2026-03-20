@@ -705,18 +705,26 @@ final class AppState {
 
     // MARK: - Echo Mode
 
-    /// Sync EchoModeState from @AppStorage values.
+    /// Sync EchoModeState from UserDefaults.
+    /// Reads directly from UserDefaults rather than @AppStorage properties,
+    /// because @AppStorage on non-View types can hold stale values.
     func syncEchoModeState() {
-        echoModeState.isActive = echoModeEnabled && TTSMode(rawValue: ttsMode) == .speechify
-        echoModeState.dockPosition = DockPosition(rawValue: echoModeDockPosition) ?? .bottom
+        let currentTTSMode = TTSMode(rawValue: UserDefaults.standard.string(forKey: "ttsMode") ?? "off") ?? .off
+        let currentEchoEnabled = UserDefaults.standard.bool(forKey: "echoModeEnabled")
+        let currentDockPos = DockPosition(rawValue: UserDefaults.standard.string(forKey: "echoModeDockPosition") ?? "bottom") ?? .bottom
+
+        echoModeState.isActive = currentEchoEnabled && currentTTSMode == .speechify
+        echoModeState.dockPosition = currentDockPos
         updateMainWindowVisibility()
+        logger.info("Echo mode sync: active=\(echoModeState.isActive), mainWindowVisible=\(isMainWindowVisible), tts=\(currentTTSMode.rawValue), echo=\(currentEchoEnabled)", category: .tts)
         updateEchoModePanel()
-        logger.info("Echo mode sync: active=\(echoModeState.isActive), mainWindowVisible=\(isMainWindowVisible)", category: .tts)
     }
 
     /// Show or hide the echo mode panel based on current state.
     private func updateEchoModePanel() {
-        if echoModeState.isActive && !isMainWindowVisible {
+        let shouldShow = echoModeState.isActive && !isMainWindowVisible
+        logger.info("Echo panel update: shouldShow=\(shouldShow), controllerNil=\(echoModeController == nil)", category: .tts)
+        if shouldShow {
             echoModeController?.showPanel()
         } else {
             echoModeController?.hidePanel()
