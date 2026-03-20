@@ -61,6 +61,109 @@ struct SettingsTabView: View {
                 }
             }
 
+            Section("Timing Analysis (Sherpa)") {
+                HStack {
+                    Circle()
+                        .fill(timingStatusColor)
+                        .frame(width: 8, height: 8)
+                    Text(timingStatusText)
+                        .font(.caption)
+                }
+
+                if appState.serverManager.isTimingLoading {
+                    HStack(spacing: 4) {
+                        ProgressView()
+                            .controlSize(.small)
+                        Text("Loading Parakeet CTC...")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                if let error = appState.serverManager.timingError {
+                    Text(error)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .lineLimit(3)
+                }
+
+                if appState.serverManager.timingModelLoaded {
+                    Button("Stop Timing Server") {
+                        appState.serverManager.stop()
+                    }
+                    .controlSize(.small)
+                } else if appState.isSettingUpServer || appState.serverManager.isTimingLoading {
+                    Button("Starting...") {}
+                        .disabled(true)
+                        .controlSize(.small)
+                } else {
+                    Button("Start Timing Server") {
+                        appState.startTimingServer()
+                    }
+                    .controlSize(.small)
+                }
+
+                Text("Provides accurate word-level timestamps for playback highlighting via Parakeet CTC. Runs automatically when new entries are created.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Bar Appearance") {
+                AppearanceEditor(
+                    label: "Waveform Bars",
+                    appearance: Binding(
+                        get: { AppearanceStore.globalBarAppearance },
+                        set: { AppearanceStore.setBarAppearance($0) }
+                    )
+                )
+            }
+
+            Section("Entry Background") {
+                AppearanceEditor(
+                    label: "Entry Rows",
+                    appearance: Binding(
+                        get: { AppearanceStore.globalEntryAppearance },
+                        set: { AppearanceStore.setEntryAppearance($0) }
+                    )
+                )
+            }
+
+            Section("Backups") {
+                HStack {
+                    Text("Backup Folder")
+                    Spacer()
+                    Text(appState.historyStore.backupFolderPath)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                HStack(spacing: 8) {
+                    Button("Change...") {
+                        let panel = NSOpenPanel()
+                        panel.canChooseDirectories = true
+                        panel.canChooseFiles = false
+                        panel.canCreateDirectories = true
+                        panel.prompt = "Select Backup Folder"
+                        if panel.runModal() == .OK, let url = panel.url {
+                            appState.historyStore.setBackupFolder(url)
+                        }
+                    }
+                    .controlSize(.small)
+
+                    Button("Reset to Default") {
+                        appState.historyStore.setBackupFolder(nil)
+                    }
+                    .controlSize(.small)
+
+                    Button("Reveal in Finder") {
+                        NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: appState.historyStore.backupFolderPath)
+                    }
+                    .controlSize(.small)
+                }
+            }
+
             Section("Permissions") {
                 LabeledContent("Microphone") {
                     if micAuthorized {
@@ -238,5 +341,21 @@ struct SettingsTabView: View {
         case .stopped: return .gray
         default: return .orange
         }
+    }
+
+    // MARK: - Timing status
+
+    private var timingStatusColor: Color {
+        if appState.serverManager.timingModelLoaded { return .green }
+        if appState.serverManager.isTimingLoading { return .orange }
+        if appState.serverManager.timingError != nil { return .red }
+        return .gray
+    }
+
+    private var timingStatusText: String {
+        if appState.serverManager.timingModelLoaded { return "Running" }
+        if appState.serverManager.isTimingLoading { return "Loading..." }
+        if appState.serverManager.timingError != nil { return "Error" }
+        return "Stopped"
     }
 }

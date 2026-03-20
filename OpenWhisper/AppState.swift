@@ -1,6 +1,12 @@
 import SwiftUI
 import KeyboardShortcuts
 
+enum AudioInputMode: String, CaseIterable {
+    case microphone = "Microphone"
+    case systemAudio = "System Audio"
+    case mixed = "Mixed (Mic + System)"
+}
+
 @MainActor
 @Observable
 final class AppState {
@@ -14,15 +20,35 @@ final class AppState {
     @ObservationIgnored
     @AppStorage("showIdlePill") var showIdlePill: Bool = true
 
+    @ObservationIgnored
+    @AppStorage("contextAwareFormatting") var contextAwareFormatting: Bool = true
+
+    @ObservationIgnored
+    @AppStorage("useDirectInsertion") var useDirectInsertion: Bool = false
+
+    @ObservationIgnored
+    @AppStorage("audioInputMode") var audioInputMode: String = AudioInputMode.microphone.rawValue
+
     let audioRecorder = AudioRecorder()
+    let systemAudioRecorder = SystemAudioRecorder()
+    let mixedAudioRecorder = MixedAudioRecorder()
     let transcriptionService = TranscriptionService()
     let pasteService = PasteService()
     let modelManager = ModelManager()
     let overlayState = OverlayState()
     let historyStore = HistoryStore()
     let serverManager = InferenceServerManager()
+    let cursorPositionService = CursorPositionService()
+    let contextStore = AccessibilityContextStore()
     let logger = TranscriptionLogger.shared
     private(set) var overlayController: OverlayController?
+
+    /// Context captured at recording start for context-aware formatting.
+    private var currentContext: AccessibilityContext?
+
+    var currentInputMode: AudioInputMode {
+        AudioInputMode(rawValue: audioInputMode) ?? .microphone
+    }
 
     /// Whether the server is being set up in the background after selecting a server model.
     var isSettingUpServer = false
@@ -62,7 +88,7 @@ final class AppState {
             guard let self else { return }
             Task { @MainActor in
                 guard !self.isRecording else { return }
-                self.startRecording()
+                await self.startRecording()
             }
         }
 
@@ -103,13 +129,21 @@ final class AppState {
         if isRecording {
             await stopRecordingAndTranscribe()
         } else {
-            startRecording()
+            await startRecording()
         }
     }
 
     func cancelRecording() {
         guard isRecording else { return }
-        _ = audioRecorder.stopRecording()
+        // Stop whichever recorder is active
+        switch currentInputMode {
+        case .microphone:
+            _ = audioRecorder.stopRecording()
+        case .systemAudio:
+            Task { await systemAudioRecorder.stopRecording() }
+        case .mixed:
+            Task { await mixedAudioRecorder.stopRecording() }
+        }
         isRecording = false
         statusMessage = "Ready"
         overlayState.phase = .cancelled
@@ -190,7 +224,7 @@ final class AppState {
 
     // MARK: - Recording
 
-    func startRecording() {
+    func startRecording() async {
         let model = modelManager.selectedModel
 
         if model.backend == .whisperCpp {
@@ -227,31 +261,70 @@ final class AppState {
             }
         }
 
-        if !Permissions.isMicrophoneAuthorized {
-            statusMessage = "Microphone permission required"
-            Permissions.requestMicrophone()
-            Self.showMainWindow()
-            return
+        let mode = currentInputMode
+
+        // Permission checks
+        if mode == .microphone || mode == .mixed {
+            if !Permissions.isMicrophoneAuthorized {
+                statusMessage = "Microphone permission required"
+                Permissions.requestMicrophone()
+                Self.showMainWindow()
+                return
+            }
+        }
+        if mode == .systemAudio || mode == .mixed {
+            if !Permissions.isScreenRecordingAuthorized {
+                statusMessage = "Screen recording permission required for system audio"
+                Permissions.requestScreenRecording()
+                Self.showMainWindow()
+                return
+            }
         }
 
+        // Capture accessibility context before recording starts (user is looking at target field)
+        let captured = cursorPositionService.captureContext()
+        if contextAwareFormatting {
+            currentContext = captured
+        } else {
+            currentContext = nil
+        }
+        // Always record context for Chain of Thought visibility
+        contextStore.recordContext(captured)
+
         do {
-            try audioRecorder.startRecording()
+            switch mode {
+            case .microphone:
+                try audioRecorder.startRecording()
+            case .systemAudio:
+                try await systemAudioRecorder.startRecording()
+            case .mixed:
+                try await mixedAudioRecorder.startRecording()
+            }
             isRecording = true
             statusMessage = "Recording..."
             overlayState.phase = .recording
             overlayController?.updateForPhase(.recording)
             syncCancelRecordingHotkey()
-            logger.info("Recording started", category: .transcription)
+            logger.info("Recording started (mode: \(mode.rawValue))", category: .transcription)
         } catch {
-            statusMessage = "Mic error: \(error.localizedDescription)"
-            logger.error("Mic error: \(error.localizedDescription)", category: .transcription)
+            statusMessage = "Recording error: \(error.localizedDescription)"
+            logger.error("Recording error: \(error.localizedDescription)", category: .transcription)
         }
     }
 
     // MARK: - Transcription
 
     func stopRecordingAndTranscribe() async {
-        let samples = audioRecorder.stopRecording()
+        let mode = currentInputMode
+        let samples: [Float]
+        switch mode {
+        case .microphone:
+            samples = audioRecorder.stopRecording()
+        case .systemAudio:
+            samples = await systemAudioRecorder.stopRecording()
+        case .mixed:
+            samples = await mixedAudioRecorder.stopRecording()
+        }
         isRecording = false
         syncCancelRecordingHotkey()
 
@@ -275,7 +348,7 @@ final class AppState {
         logger.info("Transcribing \(samples.count) samples...", category: .transcription)
 
         do {
-            let text: String
+            let result: TranscriptionResult
 
             if modelManager.selectedModel.backend == .whisperCpp {
                 guard let modelURL = modelManager.modelFileURL else {
@@ -290,24 +363,109 @@ final class AppState {
                     }
                     return
                 }
-                text = try await transcriptionService.transcribe(
+                result = try await transcriptionService.transcribe(
                     audioFrames: samples,
                     modelURL: modelURL
                 )
             } else {
-                text = try await transcriptionService.transcribe(
+                result = try await transcriptionService.transcribe(
                     audioFrames: samples,
                     using: serverManager
                 )
             }
 
-            if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            if result.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                 statusMessage = "No speech detected"
                 logger.info("No speech detected in audio", category: .transcription)
             } else {
-                pasteService.paste(text: text)
-                historyStore.add(text: text)
-                statusMessage = "Pasted: \(String(text.prefix(50)))\(text.count > 50 ? "..." : "")"
+                // Apply context-aware formatting
+                let formattedText = ContextAwareFormatter.format(result.text, context: currentContext)
+
+                // Update Chain of Thought with formatting details
+                if let ctx = currentContext {
+                    let diff = formattedText != result.text
+                        ? "Raw: \"\(result.text.prefix(60))\" -> Formatted: \"\(formattedText.prefix(60))\""
+                        : "No changes applied"
+                    contextStore.recordContext(ctx, formattingApplied: diff)
+                }
+
+                if useDirectInsertion {
+                    pasteService.paste(text: formattedText, context: currentContext)
+                } else {
+                    pasteService.paste(text: formattedText)
+                }
+
+                // Save original audio, then trim and save trimmed copy
+                let entryID = UUID()
+                do {
+                    try AudioFileManager.shared.saveOriginalAudio(
+                        samples: samples, entryID: entryID
+                    )
+                } catch {
+                    logger.error("Failed to save original audio: \(error)", category: .general)
+                }
+
+                let trimResult = SilenceAnalyzer.trimLeadingSilence(from: samples)
+                var audioFilename: String?
+                do {
+                    audioFilename = try AudioFileManager.shared.saveAudio(
+                        samples: trimResult.samples,
+                        entryID: entryID
+                    )
+                } catch {
+                    logger.error("Failed to save audio: \(error)", category: .general)
+                }
+
+                // Generate and save waveform data
+                let waveformData = WaveformDataGenerator.generate(
+                    originalSamples: samples,
+                    trimmedSamples: trimResult.samples,
+                    trimOffsetMs: trimResult.trimOffsetMs,
+                    sampleRate: 16000
+                )
+                AudioFileManager.shared.saveWaveformData(waveformData, for: entryID)
+
+                // Shift timestamps to match trimmed audio (subtract the silence offset)
+                let adjustedTimestamps: [WordTimestamp]?
+                if !result.wordTimestamps.isEmpty, trimResult.trimOffsetMs > 0 {
+                    adjustedTimestamps = result.wordTimestamps.map {
+                        WordTimestamp(
+                            id: $0.id, word: $0.word,
+                            startTimeMs: max(0, $0.startTimeMs - trimResult.trimOffsetMs),
+                            endTimeMs: max(0, $0.endTimeMs - trimResult.trimOffsetMs)
+                        )
+                    }
+                } else if !result.wordTimestamps.isEmpty {
+                    adjustedTimestamps = result.wordTimestamps
+                } else {
+                    adjustedTimestamps = nil
+                }
+
+                let trimmedDurationMs = Int(Double(trimResult.samples.count) / 16000 * 1000)
+                let entry = TranscriptionEntry(
+                    id: entryID,
+                    text: result.text,
+                    audioFilename: audioFilename,
+                    wordTimestamps: adjustedTimestamps,
+                    durationMs: trimmedDurationMs,
+                    audioSource: {
+                        switch mode {
+                        case .microphone: return .microphone
+                        case .systemAudio: return .systemAudio
+                        case .mixed: return .mixed
+                        }
+                    }(),
+                    appName: currentContext?.applicationName,
+                    bundleIdentifier: currentContext?.bundleIdentifier
+                )
+                historyStore.addEntry(entry)
+
+                // Run timing analysis in the background if the server is available
+                if entry.hasAudio {
+                    processEntryTiming(entryID: entry.id, audioSamples: trimResult.samples)
+                }
+
+                statusMessage = "Pasted: \(String(formattedText.prefix(50)))\(formattedText.count > 50 ? "..." : "")"
             }
         } catch {
             statusMessage = "Transcription error: \(error.localizedDescription)"
@@ -321,6 +479,67 @@ final class AppState {
         } else {
             overlayState.phase = .hidden
             overlayController?.updateForPhase(.hidden)
+        }
+    }
+
+    // MARK: - Audio file import
+
+    var isImporting = false
+
+    func importAudioFile() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = AudioFileImporter.supportedTypes
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        isImporting = true
+        statusMessage = "Importing audio..."
+
+        Task {
+            do {
+                let importer = AudioFileImporter()
+                let importResult = try await importer.decodeFile(url: url)
+
+                guard modelManager.selectedModel.backend == .whisperCpp,
+                      let modelURL = modelManager.modelFileURL else {
+                    statusMessage = "Local model required for import transcription"
+                    isImporting = false
+                    return
+                }
+
+                let result = try await transcriptionService.transcribe(
+                    audioFrames: importResult.samples,
+                    modelURL: modelURL
+                )
+
+                let entryID = UUID()
+                var audioFilename: String?
+                do {
+                    audioFilename = try AudioFileManager.shared.saveAudio(
+                        samples: importResult.samples,
+                        entryID: entryID
+                    )
+                } catch {
+                    logger.error("Failed to save imported audio: \(error)", category: .general)
+                }
+
+                let entry = TranscriptionEntry(
+                    id: entryID,
+                    text: result.text,
+                    audioFilename: audioFilename,
+                    wordTimestamps: result.wordTimestamps.isEmpty ? nil : result.wordTimestamps,
+                    durationMs: importResult.durationMs,
+                    audioSource: .imported
+                )
+                historyStore.addEntry(entry)
+                statusMessage = "Imported: \(url.lastPathComponent)"
+            } catch {
+                statusMessage = "Import failed: \(error.localizedDescription)"
+                logger.error("Import failed: \(error.localizedDescription)", category: .transcription)
+            }
+            isImporting = false
         }
     }
 
@@ -341,6 +560,68 @@ final class AppState {
                 logger.error("Server setup failed: \(error.localizedDescription)", category: .server)
             }
             isSettingUpServer = false
+        }
+    }
+
+    /// Start the timing model (Sherpa/Parakeet CTC) for word-level timestamps.
+    /// Also ensures the main transcription model stays loaded if it's server-based.
+    func startTimingServer() {
+        guard !isSettingUpServer else { return }
+        isSettingUpServer = true
+        logger.info("Starting timing server...", category: .server)
+
+        Task {
+            do {
+                // If the main model is server-based, ensure it's running first
+                // so the venv has all deps and the main model stays loaded.
+                if modelManager.selectedModel.requiresServer {
+                    try await serverManager.ensureRunning(model: modelManager.selectedModel)
+                }
+                try await serverManager.ensureTimingAvailable()
+                statusMessage = "Timing server ready"
+                logger.info("Timing server is ready", category: .server)
+            } catch {
+                statusMessage = "Timing server error: \(error.localizedDescription)"
+                logger.error("Timing server setup failed: \(error.localizedDescription)", category: .server)
+            }
+            isSettingUpServer = false
+        }
+    }
+
+    /// Run timing analysis on a newly created entry in the background.
+    /// Sends audio to the Sherpa timing model for CTC word-level timestamps
+    /// and updates the entry.
+    private func processEntryTiming(entryID: UUID, audioSamples: [Float]) {
+        Task {
+            do {
+                // Ensure timing model is available (starts server if needed)
+                try await serverManager.ensureTimingAvailable()
+
+                let timestamps = try await serverManager.analyzeTiming(audioFrames: audioSamples)
+                guard !timestamps.isEmpty else { return }
+
+                // Match timing words to entry text
+                guard let entry = historyStore.entries.first(where: { $0.id == entryID }) else { return }
+                let entryWords = entry.text.components(separatedBy: .whitespacesAndNewlines)
+                    .filter { !$0.isEmpty }
+
+                let wordTimestamps: [WordTimestamp]
+                if timestamps.count == entryWords.count {
+                    wordTimestamps = entryWords.enumerated().map { i, word in
+                        WordTimestamp(id: i, word: word, startTimeMs: timestamps[i].startMs, endTimeMs: timestamps[i].endMs)
+                    }
+                } else {
+                    // Word count mismatch — use timing model's words directly
+                    wordTimestamps = timestamps.enumerated().map { i, ts in
+                        WordTimestamp(id: i, word: ts.word, startTimeMs: ts.startMs, endTimeMs: ts.endMs)
+                    }
+                }
+
+                historyStore.updateTimestamps(id: entryID, wordTimestamps: wordTimestamps)
+                logger.info("Timing analysis updated entry \(entryID) with \(wordTimestamps.count) word timestamps", category: .transcription)
+            } catch {
+                logger.debug("Timing analysis skipped for entry \(entryID): \(error.localizedDescription)", category: .transcription)
+            }
         }
     }
 

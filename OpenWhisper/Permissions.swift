@@ -19,6 +19,14 @@ enum Permissions {
         AXIsProcessTrustedWithOptions(options)
     }
 
+    static var isScreenRecordingAuthorized: Bool {
+        CGPreflightScreenCaptureAccess()
+    }
+
+    static func requestScreenRecording() {
+        CGRequestScreenCaptureAccess()
+    }
+
     static var allGranted: Bool {
         isMicrophoneAuthorized && isAccessibilityGranted
     }

@@ -1,6 +1,12 @@
 import Foundation
 import SwiftWhisper
 
+struct TranscriptionResult {
+    let text: String
+    let wordTimestamps: [WordTimestamp]
+    let durationMs: Int
+}
+
 @MainActor
 final class TranscriptionService {
     private var whisperInstance: Whisper?
@@ -16,7 +22,7 @@ final class TranscriptionService {
 
     // MARK: - Whisper transcription (in-process)
 
-    func transcribe(audioFrames: [Float], modelURL: URL, initialPrompt: String? = nil) async throws -> String {
+    func transcribe(audioFrames: [Float], modelURL: URL, initialPrompt: String? = nil) async throws -> TranscriptionResult {
         logger.info("Starting whisper transcription (\(audioFrames.count) frames, \(String(format: "%.1f", Double(audioFrames.count) / 16000))s audio)", category: .transcription)
         let start = CFAbsoluteTimeGetCurrent()
 
@@ -26,23 +32,56 @@ final class TranscriptionService {
         let rawText = segments.map(\.text).joined()
         let filtered = filterTranscription(rawText)
 
+        // Build word timestamps from segments, using the filtered text
+        // so the displayed words match entry.text exactly.
+        let wordTimestamps = buildWordTimestamps(from: segments, filteredText: filtered)
+
+        let durationMs: Int
+        if let last = segments.last {
+            // Segment times from whisper.cpp are in centiseconds (10ms units)
+            durationMs = last.endTime * 10
+        } else {
+            durationMs = Int(Double(audioFrames.count) / 16000 * 1000)
+        }
+
         let elapsed = CFAbsoluteTimeGetCurrent() - start
         logger.info("Whisper done in \(String(format: "%.2f", elapsed))s — \"\(filtered.prefix(80))\"", category: .transcription)
-        return filtered
+
+        return TranscriptionResult(text: filtered, wordTimestamps: wordTimestamps, durationMs: durationMs)
     }
 
     // MARK: - Server transcription
 
-    func transcribe(audioFrames: [Float], using server: InferenceServerManager) async throws -> String {
+    func transcribe(audioFrames: [Float], using server: InferenceServerManager) async throws -> TranscriptionResult {
         logger.info("Starting server transcription (\(audioFrames.count) frames, \(String(format: "%.1f", Double(audioFrames.count) / 16000))s audio)", category: .transcription)
         let start = CFAbsoluteTimeGetCurrent()
 
-        let rawText = try await server.transcribe(audioFrames: audioFrames)
-        let filtered = filterTranscription(rawText)
+        let response = try await server.transcribe(audioFrames: audioFrames)
+        let filtered = filterTranscription(response.text)
+        let durationMs = Int(Double(audioFrames.count) / 16000 * 1000)
+
+        // Use server word timestamps if available
+        let wordTimestamps: [WordTimestamp]
+        if let serverTs = response.wordTimestamps, !serverTs.isEmpty {
+            let filteredWords = filtered.components(separatedBy: .whitespacesAndNewlines)
+                .filter { !$0.isEmpty }
+            if serverTs.count == filteredWords.count {
+                // Direct mapping — server words match filtered text
+                wordTimestamps = filteredWords.enumerated().map { i, word in
+                    WordTimestamp(id: i, word: word, startTimeMs: serverTs[i].startMs, endTimeMs: serverTs[i].endMs)
+                }
+            } else {
+                // Word count mismatch after filtering — rebuild from duration
+                wordTimestamps = buildWordTimestamps(filteredText: filtered, durationMs: durationMs)
+            }
+        } else {
+            wordTimestamps = []
+        }
 
         let elapsed = CFAbsoluteTimeGetCurrent() - start
-        logger.info("Server done in \(String(format: "%.2f", elapsed))s — \"\(filtered.prefix(80))\"", category: .transcription)
-        return filtered
+        logger.info("Server done in \(String(format: "%.2f", elapsed))s (\(wordTimestamps.count) words) — \"\(filtered.prefix(80))\"", category: .transcription)
+
+        return TranscriptionResult(text: filtered, wordTimestamps: wordTimestamps, durationMs: durationMs)
     }
 
     // MARK: - Private
@@ -59,6 +98,34 @@ final class TranscriptionService {
             params.initial_prompt = UnsafePointer(pointer)
         } else {
             params.initial_prompt = nil
+        }
+    }
+
+    /// Build word timestamps using the filtered text and segment timing.
+    private func buildWordTimestamps(from segments: [Segment], filteredText: String) -> [WordTimestamp] {
+        let totalStartMs = (segments.first?.startTime ?? 0) * 10
+        let totalEndMs = (segments.last?.endTime ?? 0) * 10
+        let totalDuration = totalEndMs - totalStartMs
+        guard totalDuration > 0 else { return [] }
+        return buildWordTimestamps(filteredText: filteredText, startMs: totalStartMs, durationMs: totalDuration)
+    }
+
+    /// Build character-weighted word timestamps over a time range.
+    private func buildWordTimestamps(filteredText: String, startMs: Int = 0, durationMs: Int) -> [WordTimestamp] {
+        let words = filteredText.components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+        guard !words.isEmpty, durationMs > 0 else { return [] }
+
+        let totalChars = words.reduce(0) { $0 + max($1.count, 1) }
+        var cursor = startMs
+
+        return words.enumerated().map { i, word in
+            let weight = Double(max(word.count, 1)) / Double(totalChars)
+            let span = Int(Double(durationMs) * weight)
+            let start = cursor
+            let end = i == words.count - 1 ? startMs + durationMs : cursor + span
+            cursor = end
+            return WordTimestamp(id: i, word: word, startTimeMs: start, endTimeMs: end)
         }
     }
 
@@ -96,6 +163,7 @@ final class TranscriptionService {
         logger.info("Loading whisper model from \(modelURL.lastPathComponent)", category: .model)
         let params = WhisperParams(strategy: .greedy)
         params.language = .english
+        params.token_timestamps = true
 
         let whisper = Whisper(fromFileURL: modelURL, withParams: params)
         self.whisperInstance = whisper

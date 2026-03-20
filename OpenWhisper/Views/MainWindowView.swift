@@ -5,6 +5,7 @@ enum AppTab: String, CaseIterable {
     case home = "Home"
     case settings = "Settings"
     case history = "History"
+    case chainOfThought = "Chain of Thought"
     case logs = "Logs"
 
     var icon: String {
@@ -12,6 +13,7 @@ enum AppTab: String, CaseIterable {
         case .home: return "house"
         case .settings: return "gear"
         case .history: return "clock"
+        case .chainOfThought: return "brain.head.profile"
         case .logs: return "doc.text"
         }
     }
@@ -57,7 +59,9 @@ struct MainWindowView: View {
                     case .settings:
                         SettingsTabView(appState: appState)
                     case .history:
-                        HistoryView(historyStore: appState.historyStore)
+                        HistoryView(historyStore: appState.historyStore, appState: appState)
+                    case .chainOfThought:
+                        ChainOfThoughtView(contextStore: appState.contextStore)
                     case .logs:
                         LogsView(logger: TranscriptionLogger.shared)
                     }
@@ -205,6 +209,13 @@ struct MainWindowView: View {
                 }
                 .padding(.top, 20)
                 .padding(.bottom, 12)
+                .overlay(alignment: .topTrailing) {
+                    Text("Build 2026.03.20-S")
+                        .font(.system(size: 9))
+                        .foregroundStyle(.tertiary)
+                        .padding(.trailing, 12)
+                        .padding(.top, 8)
+                }
 
                 // Permission banners
                 if !micAuthorized || !accessibilityGranted {
@@ -256,7 +267,8 @@ struct MainWindowView: View {
 
                 HStack(spacing: 24) {
                     hotkeyLabel("Start/stop", for: .toggleRecording)
-                    hotkeyLabel("Cancel recording", for: .cancelRecording)
+                    hotkeyLabel("Push-to-talk", for: .pushToTalkRecording)
+                    hotkeyLabel("Cancel", for: .cancelRecording)
                 }
                 .padding(.horizontal, 24)
                 .padding(.vertical, 14)

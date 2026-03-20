@@ -37,6 +37,44 @@ final class PasteService {
         }
     }
 
+    /// Insert text directly via accessibility API, falling back to clipboard paste.
+    func paste(text: String, context: AccessibilityContext?) {
+        guard let context, context.fieldType != .noTextField else {
+            paste(text: text)
+            return
+        }
+
+        // Try direct insertion via AX API
+        if tryDirectInsertion(text: text) {
+            return
+        }
+
+        // Fallback to clipboard paste
+        paste(text: text)
+    }
+
+    // MARK: - Direct insertion
+
+    private func tryDirectInsertion(text: String) -> Bool {
+        let systemWide = AXUIElementCreateSystemWide()
+
+        var focusedAppValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(systemWide, kAXFocusedApplicationAttribute as CFString, &focusedAppValue) == .success,
+              let focusedApp = focusedAppValue else { return false }
+
+        let appElement = focusedApp as! AXUIElement
+
+        var focusedValue: AnyObject?
+        guard AXUIElementCopyAttributeValue(appElement, kAXFocusedUIElementAttribute as CFString, &focusedValue) == .success,
+              let focused = focusedValue else { return false }
+
+        let element = focused as! AXUIElement
+
+        // Try setting selected text attribute (replaces selection or inserts at cursor)
+        let result = AXUIElementSetAttributeValue(element, kAXSelectedTextAttribute as CFString, text as CFTypeRef)
+        return result == .success
+    }
+
     private func simulatePaste() {
         let source = CGEventSource(stateID: .hidSystemState)
 

@@ -38,6 +38,9 @@ struct HealthResponse: Codable {
     let downloadProgress: Double
     let error: String?
     let uptime: Double?
+    let timingLoaded: Bool?
+    let timingLoading: Bool?
+    let timingError: String?
 
     enum CodingKeys: String, CodingKey {
         case status
@@ -47,12 +50,34 @@ struct HealthResponse: Codable {
         case downloadProgress = "download_progress"
         case error
         case uptime
+        case timingLoaded = "timing_loaded"
+        case timingLoading = "timing_loading"
+        case timingError = "timing_error"
     }
 }
 
-struct TranscriptionResult: Codable {
+struct ServerWordTimestamp: Codable {
+    let word: String
+    let startMs: Int
+    let endMs: Int
+
+    enum CodingKeys: String, CodingKey {
+        case word
+        case startMs = "start_ms"
+        case endMs = "end_ms"
+    }
+}
+
+struct ServerTranscriptionResponse: Codable {
     let text: String
     let duration: Double?
+    let wordTimestamps: [ServerWordTimestamp]?
+
+    enum CodingKeys: String, CodingKey {
+        case text
+        case duration
+        case wordTimestamps = "word_timestamps"
+    }
 }
 
 // MARK: - Server manager
@@ -101,6 +126,11 @@ final class InferenceServerManager {
 
     var state: ServerState = .stopped
     var loadedModelName: String?
+
+    // Timing model (Sherpa/Parakeet CTC) — for word-level timestamp analysis
+    var timingModelLoaded = false
+    var isTimingLoading = false
+    var timingError: String?
 
     private var serverProcess: Process?
     private var healthCheckTask: Task<Void, Never>?
@@ -184,6 +214,9 @@ final class InferenceServerManager {
         serverProcess = nil
         state = .stopped
         loadedModelName = nil
+        timingModelLoaded = false
+        isTimingLoading = false
+        timingError = nil
         logger.info("Inference server stopped", category: .server)
     }
 
@@ -210,7 +243,7 @@ final class InferenceServerManager {
     }
 
     /// Send audio to the server for transcription.
-    func transcribe(audioFrames: [Float]) async throws -> String {
+    func transcribe(audioFrames: [Float]) async throws -> ServerTranscriptionResponse {
         guard case .running = state else {
             throw InferenceError.serverNotRunning
         }
@@ -240,11 +273,127 @@ final class InferenceServerManager {
             throw InferenceError.transcriptionFailed("HTTP \(statusCode)")
         }
 
-        let result = try JSONDecoder().decode(TranscriptionResult.self, from: responseData)
+        let result = try JSONDecoder().decode(ServerTranscriptionResponse.self, from: responseData)
         if let dur = result.duration {
-            logger.info("Server transcription complete in \(String(format: "%.2f", dur))s", category: .transcription)
+            logger.info("Server transcription complete in \(String(format: "%.2f", dur))s (\(result.wordTimestamps?.count ?? 0) word timestamps)", category: .transcription)
         }
-        return result.text
+        return result
+    }
+
+    // MARK: - Timing model (Sherpa/Parakeet CTC)
+
+    /// Ensure the server is running and the timing model is loaded.
+    /// Reuses an existing server (even from a prior app session) if reachable.
+    func ensureTimingAvailable() async throws {
+        // If server is running and timing model is loaded, nothing to do
+        if case .running = state, timingModelLoaded { return }
+
+        // Check if a server is already reachable (e.g. from ensureRunning or a prior session)
+        if let health = await fetchHealth(), health.status == "ok" {
+            // If health response includes timing fields, the server has the new script
+            if health.timingLoaded != nil {
+                if health.timingLoaded == true {
+                    timingModelLoaded = true
+                    if case .running = state {} else {
+                        state = .running
+                        startHealthMonitoring()
+                    }
+                    return
+                }
+
+                // Server running with new script but timing not loaded — just load it
+                if case .running = state {} else {
+                    state = .running
+                    startHealthMonitoring()
+                }
+                try await requestTimingModelLoad()
+                return
+            }
+
+            // Server is running old script without timing support — restart it
+            logger.info("Server lacks timing endpoints, restarting with updated script...", category: .server)
+            await requestServerShutdown()
+            await waitForServerToStop()
+        }
+
+        // No server reachable — start one from scratch
+        state = .settingUp
+        try await setupPythonEnvironment(for: .parakeetCTC)
+        try writeServerScript()
+        state = .starting
+        try await startServerProcess()
+        startHealthMonitoring()
+        state = .running
+
+        // Load timing model
+        try await requestTimingModelLoad()
+    }
+
+    /// Request the server to load the Parakeet CTC timing model.
+    private func requestTimingModelLoad() async throws {
+        isTimingLoading = true
+        timingError = nil
+        defer { isTimingLoading = false }
+
+        let url = serverURL.appendingPathComponent("load_timing")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 300
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let errorMsg = String(data: data, encoding: .utf8) ?? "Unknown error"
+            timingError = errorMsg
+            throw InferenceError.modelLoadFailed("Timing model: \(errorMsg)")
+        }
+
+        timingModelLoaded = true
+        logger.info("Timing model (Parakeet CTC) loaded", category: .server)
+    }
+
+    /// Send audio to the timing model for CTC word-level timestamp analysis.
+    func analyzeTiming(audioFrames: [Float]) async throws -> [ServerWordTimestamp] {
+        guard timingModelLoaded else {
+            throw InferenceError.serverNotRunning
+        }
+
+        let audioData = audioFrames.withUnsafeBytes { Data($0) }
+        let base64Audio = audioData.base64EncodedString()
+
+        let url = serverURL.appendingPathComponent("timing")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 120
+
+        let body: [String: Any] = ["audio": base64Audio, "sample_rate": 16000]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (responseData, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200...299).contains(httpResponse.statusCode) else {
+            let statusCode = (response as? HTTPURLResponse)?.statusCode ?? -1
+            throw InferenceError.transcriptionFailed("Timing analysis HTTP \(statusCode)")
+        }
+
+        struct TimingResponse: Codable {
+            let wordTimestamps: [ServerWordTimestamp]?
+            let text: String?
+            let duration: Double?
+
+            enum CodingKeys: String, CodingKey {
+                case wordTimestamps = "word_timestamps"
+                case text
+                case duration
+            }
+        }
+
+        let result = try JSONDecoder().decode(TimingResponse.self, from: responseData)
+        logger.info("Timing analysis complete (\(result.wordTimestamps?.count ?? 0) words)", category: .transcription)
+        return result.wordTimestamps ?? []
     }
 
     /// Fetch current health from the server.
@@ -306,10 +455,11 @@ final class InferenceServerManager {
     }
 
     private func pythonRequirements(for model: TranscriptionModel) -> [String] {
-        var reqs = ["flask", "numpy", "soundfile", "huggingface-hub"]
+        // Always include sherpa-onnx — needed for timing analysis regardless of main model
+        var reqs = ["flask", "numpy", "soundfile", "huggingface-hub", "sherpa-onnx"]
         switch model {
         case .parakeetTDT, .parakeetCTC:
-            reqs.append("sherpa-onnx")
+            break
         case .graniteSpeech:
             reqs += ["mlx-audio"]
         default:
