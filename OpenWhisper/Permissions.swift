@@ -7,7 +7,31 @@ enum Permissions {
     }
 
     static func requestMicrophone() {
-        AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        let status = AVCaptureDevice.authorizationStatus(for: .audio)
+        switch status {
+        case .notDetermined:
+            AVCaptureDevice.requestAccess(for: .audio) { _ in }
+        case .denied, .restricted:
+            // macOS won't re-prompt after denial — open System Settings directly
+            openMicrophoneSettings()
+        default:
+            break
+        }
+    }
+
+    static func openMicrophoneSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Microphone") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    static func resetMicrophonePermission() {
+        guard let bundleID = Bundle.main.bundleIdentifier else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/tccutil")
+        process.arguments = ["reset", "Microphone", bundleID]
+        try? process.run()
+        process.waitUntilExit()
     }
 
     static var isAccessibilityGranted: Bool {
