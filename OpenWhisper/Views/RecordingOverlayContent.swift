@@ -76,6 +76,21 @@ struct RecordingOverlayContent: View {
                     }
                 }
 
+                Menu("Text to Speech") {
+                    Picker("TTS Mode", selection: Binding(
+                        get: { TTSMode(rawValue: UserDefaults.standard.string(forKey: "ttsMode") ?? "off") ?? .off },
+                        set: {
+                            UserDefaults.standard.set($0.rawValue, forKey: "ttsMode")
+                            appState.ttsMode = $0.rawValue
+                            appState.onTTSSettingsChanged()
+                        }
+                    )) {
+                        ForEach(TTSMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                }
+
                 Divider()
 
                 Button("Settings") {
