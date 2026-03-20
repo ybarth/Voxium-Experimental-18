@@ -59,7 +59,8 @@ final class EchoModeController {
         }
         self.hostingView = hosting
 
-        newPanel.orderFront(nil)
+        // Use orderFrontRegardless to show without stealing key window status
+        newPanel.orderFrontRegardless()
         self.panel = newPanel
         logger.info("Echo Mode panel shown", category: .tts)
     }

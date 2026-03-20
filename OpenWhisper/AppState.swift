@@ -142,6 +142,7 @@ final class AppState {
 
         // Initialize Echo Mode
         echoModeController = EchoModeController(state: echoModeState, speechifyService: speechifyService)
+        updateMainWindowVisibility()
         syncEchoModeState()
 
         // Observe main window visibility changes
