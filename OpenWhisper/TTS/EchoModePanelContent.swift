@@ -1,65 +1,41 @@
 import SwiftUI
 
-struct EchoModePanelContent: View {
-    let entry: TranscriptionEntry?
+/// Header-only view for the Echo Mode panel. The text content is handled
+/// by a real NSTextView in EchoModeController (required for Speechify
+/// text selection via Accessibility API).
+struct EchoModePanelHeader: View {
+    let timestamp: Date?
     let onClose: () -> Void
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header bar
-            HStack(spacing: 6) {
-                Circle()
-                    .fill(.green)
-                    .frame(width: 8, height: 8)
+        HStack(spacing: 6) {
+            Circle()
+                .fill(.green)
+                .frame(width: 8, height: 8)
 
-                Text("Echo Mode")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(.blue)
+            Text("Echo Mode")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.blue)
 
-                Spacer()
+            Spacer()
 
-                if let entry {
-                    Text(relativeTime(from: entry.date))
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-
-                Button {
-                    onClose()
-                } label: {
-                    Image(systemName: "xmark")
-                        .font(.caption2)
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.borderless)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
-            .background(.ultraThinMaterial.opacity(0.5))
-
-            Divider()
-
-            // Text content
-            if let entry {
-                Text(entry.text)
-                    .font(.body)
-                    .foregroundStyle(.primary)
-                    .lineLimit(6)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(14)
-            } else {
-                Text("Waiting for transcription...")
-                    .font(.body)
+            if let timestamp {
+                Text(relativeTime(from: timestamp))
+                    .font(.caption2)
                     .foregroundStyle(.secondary)
-                    .padding(14)
             }
+
+            Button {
+                onClose()
+            } label: {
+                Image(systemName: "xmark")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.borderless)
         }
-        .frame(width: 380)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12))
-        .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(.quaternary, lineWidth: 1)
-        )
+        .padding(.horizontal, 14)
+        .padding(.vertical, 8)
     }
 
     private func relativeTime(from date: Date) -> String {

@@ -8,12 +8,12 @@ final class EchoModeController {
     private let speechifyService: SpeechifyService
     private let logger = TranscriptionLogger.shared
 
-    /// The NSTextView used for Speechify text selection in the echo panel.
-    /// Positioned off-screen (not hidden via isHidden, which removes it from the accessibility tree).
+    /// Visible, selectable NSTextView — used for both display and Speechify text selection.
     private var echoTextView: NSTextView?
-    private var hostingView: NSHostingView<EchoModePanelContent>?
+    private var headerHostingView: NSHostingView<EchoModePanelHeader>?
 
-    private static let panelSize = NSSize(width: 380, height: 120)
+    private static let panelSize = NSSize(width: 380, height: 140)
+    private static let headerHeight: CGFloat = 36
 
     init(state: EchoModeState, speechifyService: SpeechifyService) {
         self.state = state
@@ -31,26 +31,71 @@ final class EchoModeController {
         let frame = dockFrame(for: state.dockPosition)
         let newPanel = EchoModePanel(contentRect: frame)
 
-        // Set up the hosting view as the panel's contentView (matches OverlayController pattern)
-        let hosting = NSHostingView(
-            rootView: EchoModePanelContent(
-                entry: state.currentEntry,
+        // Container view with material background
+        let container = NSVisualEffectView(frame: NSRect(origin: .zero, size: frame.size))
+        container.material = .hudWindow
+        container.blendingMode = .behindWindow
+        container.state = .active
+        container.wantsLayer = true
+        container.layer?.cornerRadius = 12
+        container.layer?.masksToBounds = true
+        container.autoresizingMask = [.width, .height]
+
+        // Header (SwiftUI)
+        let header = NSHostingView(
+            rootView: EchoModePanelHeader(
+                timestamp: state.currentEntry?.date,
                 onClose: { [weak self] in self?.hidePanel() }
             )
         )
-        newPanel.contentView = hosting
-        self.hostingView = hosting
+        header.frame = NSRect(x: 0, y: frame.height - Self.headerHeight,
+                              width: frame.width, height: Self.headerHeight)
+        header.autoresizingMask = [.width, .minYMargin]
+        container.addSubview(header)
+        headerHostingView = header
 
-        // Add an off-screen NSTextView for Speechify text selection.
-        // Do NOT use isHidden — hidden views are removed from the accessibility tree.
-        let textView = NSTextView(frame: NSRect(x: -9999, y: -9999, width: 1, height: 1))
+        // Divider
+        let divider = NSBox(frame: NSRect(x: 0, y: frame.height - Self.headerHeight - 1,
+                                          width: frame.width, height: 1))
+        divider.boxType = .separator
+        divider.autoresizingMask = [.width, .minYMargin]
+        container.addSubview(divider)
+
+        // Text view (real, visible, selectable — for both display and Speechify)
+        let scrollView = NSScrollView(frame: NSRect(
+            x: 0, y: 0,
+            width: frame.width,
+            height: frame.height - Self.headerHeight - 1
+        ))
+        scrollView.autoresizingMask = [.width, .height]
+        scrollView.hasVerticalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let textView = NSTextView(frame: scrollView.contentView.bounds)
         textView.isEditable = false
         textView.isSelectable = true
         textView.drawsBackground = false
-        textView.alphaValue = 0
-        hosting.addSubview(textView)
+        textView.textContainerInset = NSSize(width: 10, height: 10)
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.autoresizingMask = [.width]
+        textView.textContainer?.widthTracksTextView = true
+        textView.font = NSFont.systemFont(ofSize: NSFont.systemFontSize)
+        textView.textColor = .labelColor
+
+        if let entry = state.currentEntry {
+            textView.string = entry.text
+        } else {
+            textView.string = "Waiting for transcription..."
+            textView.textColor = .secondaryLabelColor
+        }
+
+        scrollView.documentView = textView
+        container.addSubview(scrollView)
         echoTextView = textView
 
+        newPanel.contentView = container
         newPanel.orderFront(nil)
         self.panel = newPanel
         logger.info("Echo Mode panel shown at frame=\(frame)", category: .tts)
@@ -63,7 +108,7 @@ final class EchoModeController {
         panel?.orderOut(nil)
         panel = nil
         echoTextView = nil
-        hostingView = nil
+        headerHostingView = nil
         logger.info("Echo Mode panel hidden", category: .tts)
     }
 
@@ -76,29 +121,31 @@ final class EchoModeController {
             return
         }
 
-        // Update SwiftUI content
-        hostingView?.rootView = EchoModePanelContent(
-            entry: entry,
+        // Update header timestamp
+        headerHostingView?.rootView = EchoModePanelHeader(
+            timestamp: entry.date,
             onClose: { [weak self] in self?.hidePanel() }
         )
 
-        // Select text in the off-screen text view and trigger Speechify
-        if let textView = echoTextView {
-            textView.string = entry.text
-            panel.makeKey()
-            panel.makeFirstResponder(textView)
-            textView.selectAll(nil)
-
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
-                self?.speechifyService.triggerRead()
-
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    textView.setSelectedRange(NSRange(location: 0, length: 0))
-                }
-            }
+        // Update text and select for Speechify
+        guard let textView = echoTextView else {
+            logger.info("Echo Mode: displayEntry called but textView is nil", category: .tts)
+            return
         }
 
-        logger.info("Echo Mode: reading entry \(entry.id)", category: .tts)
+        textView.textColor = .labelColor
+        textView.string = entry.text
+        textView.selectAll(nil)
+
+        // Make panel key and text view first responder so Speechify can read selected text
+        panel.makeKey()
+        panel.makeFirstResponder(textView)
+
+        // Wait for Accessibility API to register the selection, then trigger Speechify
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.speechifyService.triggerRead()
+            self?.logger.info("Echo Mode: triggered Speechify read for entry \(entry.id)", category: .tts)
+        }
     }
 
     // MARK: - Docking
@@ -113,7 +160,6 @@ final class EchoModeController {
     }
 
     private func dockFrame(for position: DockPosition) -> NSRect {
-        // Use last user position if available
         if let lastPos = state.lastUserPosition {
             return NSRect(origin: lastPos, size: Self.panelSize)
         }
