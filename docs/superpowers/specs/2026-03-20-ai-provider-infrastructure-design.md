@@ -1,7 +1,8 @@
 # AI Provider Infrastructure — Design Spec
 
-> Layer 1 (Sub-projects A+B+C) from the [AI Intelligence Layer Roadmap](../../ai-roadmap.md).
-> This is the foundation that all subsequent features (Dictionary, LLM Council, Transcription Post-Processing, etc.) build upon.
+> Layer 1+2 from the [AI Intelligence Layer Roadmap](../../ai-roadmap.md).
+> This is the foundation that all subsequent features (Dictionary, Transcription Post-Processing, etc.) build upon.
+> **Note:** The roadmap originally described Ollama as the primary local runtime. During design, this evolved to MLX-primary (better Apple Silicon performance) with Ollama as optional. The roadmap should be updated to reflect this.
 
 ## 1. Overview
 
@@ -146,14 +147,17 @@ User sets a ceiling in Settings (default: 80% of system RAM). The registry track
 | Phi-4 14B | 14B | ~9 GB | fastInference, reasoning |
 | Mixtral 8x22B | MoE ~140B / 44B active | ~85 GB | reasoning, creativity, longContext |
 
+**MLX inference stack:** Uses Apple's `ml-explore/mlx-swift-examples` package, specifically the `MLXLLM` module which provides high-level LLM inference (model loading, tokenization, streaming generation). The lower-level `mlx-swift` tensor library is a transitive dependency. Inference uses `MLXLLM.generate` with streaming token output.
+
 **Responsibilities:**
 - Download models from HuggingFace (MLX-quantized repos)
 - Download progress with pause/resume (HTTP range requests)
 - Integrity verification (SHA256 checksums)
-- Load models into memory via MLX Swift bindings
-- Run inference on Metal GPU
+- Load models into memory via `MLXLLM` model loading APIs
+- Run inference on Metal GPU via `MLXLLM.generate` with streaming
 - Report memory footprint from model metadata
 - Each model registers as an `AIProvider` with pre-defined capabilities
+- On load failure: set status to `.error` with descriptive message, allow retry, log diagnostics
 
 **Future expansion:** Support any MLX-compatible model from HuggingFace (user browses/downloads), with "recommended" badge on curated models.
 
@@ -217,6 +221,8 @@ final class CouncilOrchestrator {
 1. **First opinions** — Request sent to all council members concurrently. Each responds independently.
 2. **Peer review** — Each member receives all other responses (anonymized as "Response A", "Response B", etc. if `reviewAnonymized` is true). Each provides a critique + ranking.
 3. **Chairman synthesis** — Chairman receives all original responses + all peer reviews. Produces the final answer.
+
+**Streaming clarification:** `executeWithStreaming` streams only the chairman's Stage 3 output. Stages 1 and 2 run to completion internally, reporting progress via status callbacks (e.g., "3/4 members responded", "Peer review in progress") rather than streamed text.
 
 **Timeout handling:** If a member doesn't respond within `timeoutSeconds`, the council proceeds without it. Chairman is informed which members timed out.
 
@@ -294,6 +300,8 @@ final class TaskRouter {
 - **Layer 1 — Global default:** One model or named council that handles all tasks unless overridden
 - **Layer 2 — Per-task overrides:** Any specific task can override with a different model or council
 
+**Persistence:** `TaskRouter` configuration (global default + per-task overrides) is stored as JSON in `~/Library/Application Support/OpenWhisper/AI/task-routing.json`. Loaded on app launch, saved on change.
+
 **Settings flow:**
 1. User sets global default (single model or named council)
 2. For any task, user can tap "Override" to assign a different model/council
@@ -348,6 +356,8 @@ struct PredictedTask {
 6. Immediately reassesses when significant context change detected (app switch, etc.)
 7. Unloads models that haven't been used or predicted for longer than `keepAliveTimeout`
 8. Logs prediction accuracy to improve over time
+
+**Poll overlap protection:** If a previous `assessContext()` call is still in-flight when the next poll fires, the poll is skipped. This prevents runaway resource consumption if the care model is a slower, larger model. The user can assign any model as the care model, but the task's required capabilities (`reasoning, fastInference`) serve as a suggestion guide toward models that can respond within the poll interval.
 
 **Dictation content analysis:** The care model ingests the substance of recent dictations — not just metadata. If the user has been dictating about database schemas, it predicts coding-related tasks. If dictating Hebrew words, it predicts multilingual dictionary needs.
 
@@ -497,7 +507,7 @@ New "AI Providers" section in Settings with sub-tabs:
 - `project.yml` — add MLX Swift package dependency
 
 ### New SPM Dependencies
-- `mlx-swift` — Apple's MLX framework Swift bindings (for local model inference)
+- `ml-explore/mlx-swift-examples` — provides `MLXLLM` module for high-level LLM inference (model loading, tokenization, streaming generation). Transitively depends on `mlx-swift` (low-level tensor library).
 
 ### Existing Code Untouched
 - `InferenceServerManager` — Parakeet/Granite transcription continues working as-is

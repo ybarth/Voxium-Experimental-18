@@ -13,9 +13,10 @@ Each layer depends on the one before it. Each sub-project gets its own design sp
 ### Layer 1: AI Provider Infrastructure
 
 **Sub-project A: Local LLM Management**
-- Ollama integration for running open-source models locally (DeepSeek, Llama, etc.)
-- Model download, health checks, start/stop lifecycle
-- Follows the same pattern as the existing `InferenceServerManager`
+- MLX as primary local runtime (best Apple Silicon / M4 performance via Metal GPU)
+- 8 curated models: Llama 3.1 70B, Qwen 2.5 72B, Kimi-Dev-72B, GLM-4.6, DeepSeek-R1 32B, Gemma 2 27B, Phi-4 14B, Mixtral 8x22B
+- Ollama as optional convenience integration (auto-detects local install)
+- Model download from HuggingFace with pause/resume, health checks, load/unload lifecycle
 
 **Sub-project B: Commercial API Integration (BYOK)**
 - Bring-your-own-key management for Claude, GPT, Gemini, Grok
