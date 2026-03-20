@@ -31,38 +31,29 @@ final class EchoModeController {
         let frame = dockFrame(for: state.dockPosition)
         let newPanel = EchoModePanel(contentRect: frame)
 
-        // Create an off-screen NSTextView for Speechify text selection.
-        // Do NOT use isHidden — hidden views are removed from the accessibility tree.
-        let textView = NSTextView(frame: NSRect(x: -9999, y: -9999, width: 1, height: 1))
-        textView.isEditable = false
-        textView.isSelectable = true
-        textView.drawsBackground = false
-        textView.alphaValue = 0
-        newPanel.contentView?.addSubview(textView)
-        echoTextView = textView
-
+        // Set up the hosting view as the panel's contentView (matches OverlayController pattern)
         let hosting = NSHostingView(
             rootView: EchoModePanelContent(
                 entry: state.currentEntry,
                 onClose: { [weak self] in self?.hidePanel() }
             )
         )
-        newPanel.contentView?.addSubview(hosting, positioned: .below, relativeTo: textView)
-        hosting.translatesAutoresizingMaskIntoConstraints = false
-        if let contentView = newPanel.contentView {
-            NSLayoutConstraint.activate([
-                hosting.topAnchor.constraint(equalTo: contentView.topAnchor),
-                hosting.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-                hosting.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-                hosting.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
-            ])
-        }
+        newPanel.contentView = hosting
         self.hostingView = hosting
 
-        // Use orderFrontRegardless to show without stealing key window status
-        newPanel.orderFrontRegardless()
+        // Add an off-screen NSTextView for Speechify text selection.
+        // Do NOT use isHidden — hidden views are removed from the accessibility tree.
+        let textView = NSTextView(frame: NSRect(x: -9999, y: -9999, width: 1, height: 1))
+        textView.isEditable = false
+        textView.isSelectable = true
+        textView.drawsBackground = false
+        textView.alphaValue = 0
+        hosting.addSubview(textView)
+        echoTextView = textView
+
+        newPanel.orderFront(nil)
         self.panel = newPanel
-        logger.info("Echo Mode panel shown", category: .tts)
+        logger.info("Echo Mode panel shown at frame=\(frame)", category: .tts)
     }
 
     func hidePanel() {
@@ -80,9 +71,12 @@ final class EchoModeController {
     func displayEntry(_ entry: TranscriptionEntry) {
         state.currentEntry = entry
 
-        guard let panel else { return }
+        guard let panel else {
+            logger.info("Echo Mode: displayEntry called but panel is nil", category: .tts)
+            return
+        }
 
-        // Update SwiftUI content via rootView property (avoids recreating the hosting view)
+        // Update SwiftUI content
         hostingView?.rootView = EchoModePanelContent(
             entry: entry,
             onClose: { [weak self] in self?.hidePanel() }
@@ -98,7 +92,6 @@ final class EchoModeController {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.speechifyService.triggerRead()
 
-                // Clean up selection after Speechify has grabbed it
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                     textView.setSelectedRange(NSRange(location: 0, length: 0))
                 }
