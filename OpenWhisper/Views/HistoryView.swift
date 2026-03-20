@@ -28,6 +28,9 @@ struct HistoryView: View {
     @State private var showDeleteSelectedConfirmation = false
     @State private var entryAppearances: [UUID: EntryAppearanceOverride] = [:]
     @State private var appearancePopoverEntryID: UUID?
+    @AppStorage("ttsMode") private var ttsMode: String = TTSMode.off.rawValue
+    @State private var selectAllClosures: [UUID: () -> Void] = [:]
+    @State private var deselectAllClosures: [UUID: () -> Void] = [:]
 
     var body: some View {
         if historyStore.entries.isEmpty {
@@ -193,6 +196,18 @@ struct HistoryView: View {
                                     }
                                     .buttonStyle(.borderless)
                                     .help(expandedEntryID == entry.id ? "Collapse" : "Play audio")
+                                }
+
+                                if TTSMode(rawValue: ttsMode) == .speechify && (viewMode == .text || viewMode == .hybrid) {
+                                    Button {
+                                        readEntryAloud(entry)
+                                    } label: {
+                                        Image(systemName: "speaker.wave.2.fill")
+                                            .font(.caption)
+                                    }
+                                    .buttonStyle(.borderless)
+                                    .help("Read aloud with Speechify")
+                                    .disabled(appState.isRecording || appState.isTranscribing)
                                 }
 
                                 Button {
@@ -368,7 +383,11 @@ struct HistoryView: View {
                     activeWordIndex: -1,
                     wordTimestamps: entry.wordTimestamps ?? [],
                     onWordTapped: { startPlayback(for: entry, atWord: $0) },
-                    lineLimit: 4
+                    lineLimit: 4,
+                    onSelectAllBridge: { selectAll, deselectAll in
+                        selectAllClosures[entry.id] = selectAll
+                        deselectAllClosures[entry.id] = deselectAll
+                    }
                 )
                 .transition(.opacity)
             }
@@ -439,7 +458,11 @@ struct HistoryView: View {
                         activeWordIndex: -1,
                         wordTimestamps: entry.wordTimestamps ?? [],
                         onWordTapped: { startPlayback(for: entry, atWord: $0) },
-                        lineLimit: 4
+                        lineLimit: 4,
+                        onSelectAllBridge: { selectAll, deselectAll in
+                            selectAllClosures[entry.id] = selectAll
+                            deselectAllClosures[entry.id] = deselectAll
+                        }
                     )
                 }
                 .transition(.opacity)
@@ -688,6 +711,21 @@ struct HistoryView: View {
         let minutes = totalSeconds / 60
         let seconds = totalSeconds % 60
         return "\(minutes)m \(seconds)s"
+    }
+
+    private func readEntryAloud(_ entry: TranscriptionEntry) {
+        guard let selectAll = selectAllClosures[entry.id] else { return }
+        selectAll()
+
+        // Wait 50ms for Accessibility API to register the selection, then trigger Speechify
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+            appState.speechifyService.triggerRead()
+
+            // Deselect after a short delay to clean up
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                deselectAllClosures[entry.id]?()
+            }
+        }
     }
 
     private func copyEntry(_ entry: TranscriptionEntry) {

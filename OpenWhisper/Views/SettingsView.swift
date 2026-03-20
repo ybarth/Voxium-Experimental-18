@@ -6,6 +6,9 @@ struct SettingsView: View {
     let appState: AppState
     @State private var launchAtLogin = SMAppService.mainApp.status == .enabled
     @State private var storageBytes: Int64 = 0
+    @AppStorage("ttsMode") private var ttsMode: String = TTSMode.off.rawValue
+    @AppStorage("echoModeEnabled") private var echoModeEnabled: Bool = false
+    @AppStorage("echoModeDockPosition") private var echoModeDockPosition: String = DockPosition.bottom.rawValue
 
     var body: some View {
         Form {
@@ -262,6 +265,55 @@ struct SettingsView: View {
                     }
                 }
             }
+            Section("Text to Speech") {
+                Picker("TTS Mode", selection: Binding(
+                    get: { TTSMode(rawValue: ttsMode) ?? .off },
+                    set: { ttsMode = $0.rawValue }
+                )) {
+                    ForEach(TTSMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+
+                if TTSMode(rawValue: ttsMode) == .speechify {
+                    Text("Requires Speechify desktop app with backtick (`) configured as the read shortcut.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                    Toggle("Echo Mode", isOn: $echoModeEnabled)
+
+                    if echoModeEnabled {
+                        Picker("Dock Position", selection: Binding(
+                            get: { DockPosition(rawValue: echoModeDockPosition) ?? .bottom },
+                            set: { echoModeDockPosition = $0.rawValue }
+                        )) {
+                            ForEach(DockPosition.allCases, id: \.self) { pos in
+                                Text(pos.displayName).tag(pos)
+                            }
+                        }
+
+                        Text("Shows a floating panel with the latest transcription. Automatically reads new dictations aloud.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .onChange(of: ttsMode) { _, newValue in
+                appState.ttsMode = newValue
+                appState.onTTSSettingsChanged()
+            }
+            .onChange(of: echoModeEnabled) { _, newValue in
+                appState.echoModeEnabled = newValue
+                appState.onTTSSettingsChanged()
+            }
+            .onChange(of: echoModeDockPosition) { _, newValue in
+                appState.echoModeDockPosition = newValue
+                appState.onTTSSettingsChanged()
+                appState.echoModeController?.updateDockPosition(
+                    DockPosition(rawValue: newValue) ?? .bottom
+                )
+            }
+
             Section {
                 Text("Build 2026.03.20-A")
                     .font(.caption2)

@@ -1,6 +1,8 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    /// Posted when the main window becomes visible or closes.
+    static let mainWindowVisibilityChanged = Notification.Name("mainWindowVisibilityChanged")
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }
@@ -43,6 +45,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if !hasVisibleMainWindow {
                 NSApp.setActivationPolicy(.accessory)
             }
+            NotificationCenter.default.post(name: Self.mainWindowVisibilityChanged, object: nil)
         }
     }
 
@@ -52,5 +55,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
               window.title == "OpenWhisper" || window.identifier?.rawValue == "main"
         else { return }
         NSApp.setActivationPolicy(.regular)
+        NotificationCenter.default.post(name: Self.mainWindowVisibilityChanged, object: nil)
     }
 }

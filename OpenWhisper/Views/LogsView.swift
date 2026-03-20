@@ -102,6 +102,7 @@ struct LogsView: View {
         case .server: return .purple
         case .transcription: return .green
         case .model: return .orange
+        case .tts: return .cyan
         }
     }
 

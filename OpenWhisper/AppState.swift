@@ -43,6 +43,24 @@ final class AppState {
     let logger = TranscriptionLogger.shared
     private(set) var overlayController: OverlayController?
 
+    // MARK: - TTS / Echo Mode
+
+    let speechifyService = SpeechifyService()
+    let echoModeState = EchoModeState()
+    private(set) var echoModeController: EchoModeController?
+
+    @ObservationIgnored
+    @AppStorage("ttsMode") var ttsMode: String = TTSMode.off.rawValue
+
+    @ObservationIgnored
+    @AppStorage("echoModeEnabled") var echoModeEnabled: Bool = false
+
+    @ObservationIgnored
+    @AppStorage("echoModeDockPosition") var echoModeDockPosition: String = DockPosition.bottom.rawValue
+
+    /// Whether the main app window is currently visible.
+    var isMainWindowVisible: Bool = false
+
     /// Context captured at recording start for context-aware formatting.
     private var currentContext: AccessibilityContext?
 
@@ -120,6 +138,23 @@ final class AppState {
         // If a server model was previously selected, start the server in the background
         if modelManager.selectedModel.requiresServer {
             startServerInBackground(for: modelManager.selectedModel)
+        }
+
+        // Initialize Echo Mode
+        echoModeController = EchoModeController(state: echoModeState, speechifyService: speechifyService)
+        syncEchoModeState()
+
+        // Observe main window visibility changes
+        NotificationCenter.default.addObserver(
+            forName: AppDelegate.mainWindowVisibilityChanged,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            guard let self else { return }
+            Task { @MainActor in
+                self.updateMainWindowVisibility()
+                self.updateEchoModePanel()
+            }
         }
 
         logger.info("AppState initialized", category: .general)
@@ -225,6 +260,11 @@ final class AppState {
     // MARK: - Recording
 
     func startRecording() async {
+        // Pause Speechify if TTS is active (manual read or echo mode)
+        if TTSMode(rawValue: ttsMode) == .speechify {
+            speechifyService.pausePlayback()
+        }
+
         let model = modelManager.selectedModel
 
         if model.backend == .whisperCpp {
@@ -460,6 +500,9 @@ final class AppState {
                 )
                 historyStore.addEntry(entry)
 
+                // Trigger Echo Mode read-aloud if active
+                echoNewEntry(entry)
+
                 // Run timing analysis in the background if the server is available
                 if entry.hasAudio {
                     processEntryTiming(entryID: entry.id, audioSamples: trimResult.samples)
@@ -662,5 +705,42 @@ final class AppState {
         } else {
             KeyboardShortcuts.disable(.cancelRecording)
         }
+    }
+
+    // MARK: - Echo Mode
+
+    /// Sync EchoModeState from @AppStorage values.
+    func syncEchoModeState() {
+        echoModeState.isActive = echoModeEnabled && TTSMode(rawValue: ttsMode) == .speechify
+        echoModeState.dockPosition = DockPosition(rawValue: echoModeDockPosition) ?? .bottom
+        updateEchoModePanel()
+    }
+
+    /// Show or hide the echo mode panel based on current state.
+    private func updateEchoModePanel() {
+        if echoModeState.isActive && !isMainWindowVisible {
+            echoModeController?.showPanel()
+        } else {
+            echoModeController?.hidePanel()
+        }
+    }
+
+    /// Check if the main window is currently visible.
+    private func updateMainWindowVisibility() {
+        isMainWindowVisible = NSApplication.shared.windows.contains {
+            !($0 is NSPanel) && $0.isVisible &&
+            ($0.title == "OpenWhisper" || $0.identifier?.rawValue == "main")
+        }
+    }
+
+    /// Called when TTS settings change.
+    func onTTSSettingsChanged() {
+        syncEchoModeState()
+    }
+
+    /// Called after a new transcription entry is added — triggers echo mode read.
+    private func echoNewEntry(_ entry: TranscriptionEntry) {
+        guard echoModeState.isActive, !isMainWindowVisible else { return }
+        echoModeController?.displayEntry(entry)
     }
 }

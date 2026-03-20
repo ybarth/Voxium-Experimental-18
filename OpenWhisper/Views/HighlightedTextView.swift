@@ -10,12 +10,15 @@ struct HighlightedTextView: NSViewRepresentable {
     let wordTimestamps: [WordTimestamp]
     let onWordTapped: ((Int) -> Void)?
     var lineLimit: Int? = nil
+    /// Set to a non-nil closure to receive references to select/deselect functions.
+    var onSelectAllBridge: ((_ selectAll: @escaping () -> Void, _ deselectAll: @escaping () -> Void) -> Void)? = nil
 
     func makeNSView(context: Context) -> HighlightedTextNSView {
         let view = HighlightedTextNSView()
         view.setLineLimit(lineLimit)
         view.setText(text, timestamps: wordTimestamps)
         view.onWordTapped = onWordTapped
+        onSelectAllBridge?({ view.selectAllText() }, { view.deselectAllText() })
         return view
     }
 
@@ -23,6 +26,7 @@ struct HighlightedTextView: NSViewRepresentable {
         nsView.onWordTapped = onWordTapped
         nsView.setLineLimit(lineLimit)
         nsView.updateHighlight(activeIndex: activeWordIndex, animated: true)
+        onSelectAllBridge?({ nsView.selectAllText() }, { nsView.deselectAllText() })
     }
 }
 
@@ -129,6 +133,21 @@ final class HighlightedTextNSView: NSView {
             .paragraphStyle: paragraphStyle,
         ]
         textStorage.setAttributedString(NSAttributedString(string: text, attributes: attrs))
+    }
+
+    /// Select all text for Speechify TTS integration.
+    /// Makes the text view selectable and first responder so the Accessibility API
+    /// can report the selected text to Speechify.
+    func selectAllText() {
+        textView.isSelectable = true
+        window?.makeFirstResponder(textView)
+        textView.selectAll(nil)
+    }
+
+    /// Deselect text and restore non-selectable state.
+    func deselectAllText() {
+        textView.setSelectedRange(NSRange(location: 0, length: 0))
+        textView.isSelectable = false
     }
 
     func updateHighlight(activeIndex: Int, animated: Bool) {

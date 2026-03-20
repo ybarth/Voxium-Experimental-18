@@ -7,6 +7,7 @@ enum LogCategory: String, CaseIterable {
     case server
     case transcription
     case model
+    case tts
 }
 
 struct LogEntry: Identifiable {
