@@ -722,8 +722,10 @@ final class AppState {
 
     /// Show or hide the echo mode panel based on current state.
     private func updateEchoModePanel() {
-        let shouldShow = echoModeState.isActive && !isMainWindowVisible
-        logger.info("Echo panel update: shouldShow=\(shouldShow), controllerNil=\(echoModeController == nil)", category: .tts)
+        let active = echoModeState.isActive
+        let windowVisible = isMainWindowVisible
+        let shouldShow = active && !windowVisible
+        logger.info("Echo panel: active=\(active), windowVisible=\(windowVisible), shouldShow=\(shouldShow)", category: .tts)
         if shouldShow {
             echoModeController?.showPanel()
         } else {

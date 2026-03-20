@@ -15,7 +15,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Monitor window visibility to hide/show dock icon
+        // Monitor window visibility to hide/show dock icon and echo mode panel
         NotificationCenter.default.addObserver(
             self,
             selector: #selector(windowDidClose),
@@ -26,6 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             self,
             selector: #selector(windowDidBecomeKey),
             name: NSWindow.didBecomeKeyNotification,
+            object: nil
+        )
+        // Also observe resign key — SwiftUI windows may hide instead of close
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowDidResignKey),
+            name: NSWindow.didResignKeyNotification,
             object: nil
         )
     }
@@ -56,5 +63,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else { return }
         NSApp.setActivationPolicy(.regular)
         NotificationCenter.default.post(name: Self.mainWindowVisibilityChanged, object: nil)
+    }
+
+    @objc private func windowDidResignKey(_ notification: Notification) {
+        guard let window = notification.object as? NSWindow,
+              !(window is NSPanel),
+              window.title == "OpenWhisper" || window.identifier?.rawValue == "main"
+        else { return }
+
+        // Delay to let window fully hide/close before checking visibility
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+            let hasVisibleMainWindow = NSApplication.shared.windows.contains {
+                !($0 is NSPanel) && $0.isVisible &&
+                ($0.title == "OpenWhisper" || $0.identifier?.rawValue == "main")
+            }
+            if !hasVisibleMainWindow {
+                NSApp.setActivationPolicy(.accessory)
+            }
+            NotificationCenter.default.post(name: Self.mainWindowVisibilityChanged, object: nil)
+        }
     }
 }
