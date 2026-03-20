@@ -315,7 +315,7 @@ struct SettingsView: View {
             }
 
             Section {
-                Text("Build 2026.03.20-A")
+                Text("Build 2026.03.20-T")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .frame(maxWidth: .infinity, alignment: .center)

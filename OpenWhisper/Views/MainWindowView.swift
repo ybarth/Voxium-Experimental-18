@@ -210,7 +210,7 @@ struct MainWindowView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 12)
                 .overlay(alignment: .topTrailing) {
-                    Text("Build 2026.03.20-S")
+                    Text("Build 2026.03.20-T")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .padding(.trailing, 12)
