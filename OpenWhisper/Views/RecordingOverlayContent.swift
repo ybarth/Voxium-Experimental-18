@@ -89,6 +89,19 @@ struct RecordingOverlayContent: View {
                             Text(mode.displayName).tag(mode)
                         }
                     }
+
+                    if TTSMode(rawValue: UserDefaults.standard.string(forKey: "ttsMode") ?? "off") == .speechify {
+                        Divider()
+
+                        Toggle("Echo Mode", isOn: Binding(
+                            get: { UserDefaults.standard.bool(forKey: "echoModeEnabled") },
+                            set: {
+                                UserDefaults.standard.set($0, forKey: "echoModeEnabled")
+                                appState.echoModeEnabled = $0
+                                appState.onTTSSettingsChanged()
+                            }
+                        ))
+                    }
                 }
 
                 Divider()

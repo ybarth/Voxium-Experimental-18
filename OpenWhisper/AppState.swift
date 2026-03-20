@@ -261,11 +261,6 @@ final class AppState {
     // MARK: - Recording
 
     func startRecording() async {
-        // Pause Speechify if TTS is active (manual read or echo mode)
-        if TTSMode(rawValue: ttsMode) == .speechify {
-            speechifyService.pausePlayback()
-        }
-
         let model = modelManager.selectedModel
 
         if model.backend == .whisperCpp {
@@ -714,7 +709,9 @@ final class AppState {
     func syncEchoModeState() {
         echoModeState.isActive = echoModeEnabled && TTSMode(rawValue: ttsMode) == .speechify
         echoModeState.dockPosition = DockPosition(rawValue: echoModeDockPosition) ?? .bottom
+        updateMainWindowVisibility()
         updateEchoModePanel()
+        logger.info("Echo mode sync: active=\(echoModeState.isActive), mainWindowVisible=\(isMainWindowVisible)", category: .tts)
     }
 
     /// Show or hide the echo mode panel based on current state.
