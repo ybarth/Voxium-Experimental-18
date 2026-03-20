@@ -5,7 +5,7 @@ struct SettingsTabView: View {
     let appState: AppState
     @State private var micAuthorized = Permissions.isMicrophoneAuthorized
     @State private var accessibilityGranted = Permissions.isAccessibilityGranted
-    @AppStorage("textInsertionMethod") private var textInsertionMethod: String = TextInsertionMethod.paste.rawValue
+    @AppStorage("textInsertionMethod") private var textInsertionMethod: String = TextInsertionMethod.accessibility.rawValue
     @AppStorage("ttsMode") private var ttsMode: String = TTSMode.off.rawValue
     @AppStorage("echoModeEnabled") private var echoModeEnabled: Bool = false
     @AppStorage("echoModeDockPosition") private var echoModeDockPosition: String = DockPosition.bottom.rawValue

@@ -49,7 +49,7 @@ final class AppState {
     let accessibilityInsertionService = AccessibilityInsertionService()
 
     @ObservationIgnored
-    @AppStorage("textInsertionMethod") var textInsertionMethod: String = TextInsertionMethod.paste.rawValue
+    @AppStorage("textInsertionMethod") var textInsertionMethod: String = TextInsertionMethod.accessibility.rawValue
 
     // MARK: - TTS / Echo Mode
 
