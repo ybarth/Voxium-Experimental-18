@@ -19,3 +19,17 @@ enum DockPosition: String, CaseIterable {
         rawValue.capitalized
     }
 }
+
+enum TextInsertionMethod: String, CaseIterable {
+    case paste
+    case keyPresses
+    case accessibility
+
+    var displayName: String {
+        switch self {
+        case .paste: return "Paste (⌘V)"
+        case .keyPresses: return "Key Presses"
+        case .accessibility: return "Accessibility API"
+        }
+    }
+}

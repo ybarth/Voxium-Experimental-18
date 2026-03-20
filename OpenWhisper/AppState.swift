@@ -43,6 +43,14 @@ final class AppState {
     let logger = TranscriptionLogger.shared
     private(set) var overlayController: OverlayController?
 
+    // MARK: - Text Insertion
+
+    let keyPressInsertionService = KeyPressInsertionService()
+    let accessibilityInsertionService = AccessibilityInsertionService()
+
+    @ObservationIgnored
+    @AppStorage("textInsertionMethod") var textInsertionMethod: String = TextInsertionMethod.paste.rawValue
+
     // MARK: - TTS / Echo Mode
 
     let speechifyService = SpeechifyService()
@@ -425,10 +433,22 @@ final class AppState {
                     contextStore.recordContext(ctx, formattingApplied: diff)
                 }
 
-                if useDirectInsertion {
-                    pasteService.paste(text: formattedText, context: currentContext)
-                } else {
+                // Insert text using the configured method
+                let insertionMethod = TextInsertionMethod(rawValue:
+                    UserDefaults.standard.string(forKey: "textInsertionMethod") ?? "paste") ?? .paste
+                var axInsertionResult: InsertionResult?
+
+                switch insertionMethod {
+                case .paste:
                     pasteService.paste(text: formattedText)
+                case .keyPresses:
+                    keyPressInsertionService.insert(text: formattedText)
+                case .accessibility:
+                    let result = accessibilityInsertionService.insert(text: formattedText)
+                    axInsertionResult = result
+                    if case .fallbackToPaste = result {
+                        pasteService.paste(text: formattedText)
+                    }
                 }
 
                 // Save original audio, then trim and save trimmed copy
@@ -497,7 +517,11 @@ final class AppState {
                 historyStore.addEntry(entry)
 
                 // Trigger Echo Mode read-aloud if active
-                echoNewEntry(entry)
+                if let axResult = axInsertionResult, case .success(let element, let range) = axResult {
+                    echoNewEntryViaAX(entry, element: element, range: range)
+                } else {
+                    echoNewEntry(entry)
+                }
 
                 // Run timing analysis in the background if the server is available
                 if entry.hasAudio {
@@ -746,9 +770,24 @@ final class AppState {
         syncEchoModeState()
     }
 
-    /// Called after a new transcription entry is added — triggers echo mode read.
+    /// Called after a new transcription entry is added — triggers echo mode read via panel.
     private func echoNewEntry(_ entry: TranscriptionEntry) {
         guard echoModeState.isActive, !isMainWindowVisible else { return }
         echoModeController?.displayEntry(entry)
+    }
+
+    /// Echo mode via AX: select the inserted text range in the target app and trigger Speechify.
+    /// No floating panel needed — the text is already in the target app's text field.
+    private func echoNewEntryViaAX(_ entry: TranscriptionEntry, element: AXUIElement, range: CFRange) {
+        guard echoModeState.isActive else { return }
+
+        // Select the inserted text range in the target app
+        accessibilityInsertionService.selectRange(element: element, range: range)
+
+        // Trigger Speechify — target app is already active with the selection
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            self?.speechifyService.triggerRead()
+            self?.logger.info("Echo Mode (AX): triggered Speechify for entry \(entry.id)", category: .tts)
+        }
     }
 }

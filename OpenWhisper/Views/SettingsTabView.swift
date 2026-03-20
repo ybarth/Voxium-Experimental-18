@@ -5,6 +5,7 @@ struct SettingsTabView: View {
     let appState: AppState
     @State private var micAuthorized = Permissions.isMicrophoneAuthorized
     @State private var accessibilityGranted = Permissions.isAccessibilityGranted
+    @AppStorage("textInsertionMethod") private var textInsertionMethod: String = TextInsertionMethod.paste.rawValue
     @AppStorage("ttsMode") private var ttsMode: String = TTSMode.off.rawValue
     @AppStorage("echoModeEnabled") private var echoModeEnabled: Bool = false
     @AppStorage("echoModeDockPosition") private var echoModeDockPosition: String = DockPosition.bottom.rawValue
@@ -129,6 +130,32 @@ struct SettingsTabView: View {
                         set: { AppearanceStore.setEntryAppearance($0) }
                     )
                 )
+            }
+
+            Section("Text Insertion") {
+                Picker("Insertion Method", selection: Binding(
+                    get: { TextInsertionMethod(rawValue: textInsertionMethod) ?? .paste },
+                    set: { textInsertionMethod = $0.rawValue }
+                )) {
+                    ForEach(TextInsertionMethod.allCases, id: \.self) { method in
+                        Text(method.displayName).tag(method)
+                    }
+                }
+
+                switch TextInsertionMethod(rawValue: textInsertionMethod) ?? .paste {
+                case .paste:
+                    Text("Copies text to clipboard and simulates ⌘V. Most compatible.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .keyPresses:
+                    Text("Simulates individual key presses. Works without clipboard access.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                case .accessibility:
+                    Text("Inserts text directly via Accessibility API. Enables in-app echo mode (no floating panel needed).")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
             }
 
             Section("Backups") {
