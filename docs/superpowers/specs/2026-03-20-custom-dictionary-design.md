@@ -24,7 +24,7 @@ struct DictionaryEntry: Codable, Identifiable {
     var tags: [String]                      // ["Names", "Computer Science", ...]
     var usageCount: Int                     // for tier 1 frequency ranking
     var lastUsedDate: Date?                 // for recency ranking
-    var appContexts: [String]              // bundle IDs where this word is used
+    var appContexts: [String]              // bundle IDs where this word is used (capped at 20 most recent)
     var createdDate: Date
     var tierOverride: TierOverride?         // user can pin to tier 1 or force tier 3
 }
@@ -132,6 +132,8 @@ Raw transcription text
 
 All modes capture the selected text via the Accessibility API (already used by `CursorPositionService` for `selectedText`).
 
+**Empty selection:** If no text is selected when the hotkey is pressed, open the add-word form with an empty spelling field (user types it manually). In Inline Overlay mode, show a brief toast "Select a word first" and dismiss.
+
 ### 4.2 Add Word via Verbal Spelling
 
 **Entry point:** "Add Word" button in dictionary tab → "Spell by Voice" option.
@@ -197,7 +199,7 @@ For each word in the transcription output:
 2. Look up in `phoneticIndex` (maps codes → dictionary entries)
 3. Apply confidence threshold:
    - Both Soundex AND Metaphone must match (not just one)
-   - The transcribed word must NOT be in a standard English dictionary (don't replace real words)
+   - The transcribed word must NOT be in a standard English dictionary — use `/usr/share/dict/words` (~235k words) as the baseline; consider supplementing with a more comprehensive word list if false positives arise
    - If pronunciation audio exists, optionally compare audio similarity
 4. If match passes threshold, replace transcribed word with dictionary spelling
 
