@@ -314,6 +314,11 @@ struct SettingsView: View {
                 )
             }
 
+            Section("AI Providers") {
+                AIProvidersSettingsView(appState: appState)
+                    .frame(height: 500)
+            }
+
             Section {
                 Text("Build 2026.03.20-T")
                     .font(.caption2)
@@ -322,7 +327,7 @@ struct SettingsView: View {
             }
         }
         .formStyle(.grouped)
-        .frame(width: 440, height: 720)
+        .frame(width: 440, height: 920)
         .onAppear {
             storageBytes = AudioFileManager.shared.totalStorageBytes()
         }
