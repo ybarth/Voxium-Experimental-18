@@ -838,38 +838,46 @@ final class AppState {
     // MARK: - AI Setup
 
     private func setupAIProviders() async {
-        // Scan for models already on disk from other tools (HuggingFace cache, LM Studio)
-        let existingModels = mlxModelManager.downloadManager.scanForExistingModels(catalog: MLXModelManager.catalog)
-        for match in existingModels {
-            do {
-                try mlxModelManager.downloadManager.linkExternalModel(match)
-                logger.info("Linked existing model \(match.modelID) from \(match.sourceName)", category: .general)
-            } catch {
-                logger.error("Failed to link model \(match.modelID): \(error)", category: .general)
-            }
-        }
-
-        // Register MLX providers
+        // Register MLX providers first (lightweight — just creates objects)
         for provider in mlxModelManager.createProviders() {
             providerRegistry.register(provider)
         }
 
-        // Discover Ollama models
-        await ollamaDiscovery.detect()
-        for provider in ollamaDiscovery.discoveredModels {
-            providerRegistry.register(provider)
+        // Do heavy I/O work (filesystem scanning, network calls) in background
+        Task.detached(priority: .utility) { [weak self] in
+            guard let self else { return }
+
+            // Scan for models already on disk from other tools
+            let catalog = MLXModelManager.catalog
+            let downloadManager = await self.mlxModelManager.downloadManager
+            let existingModels = await downloadManager.scanForExistingModels(catalog: catalog)
+            for match in existingModels {
+                do {
+                    try await downloadManager.linkExternalModel(match)
+                    await self.logger.info("Linked existing model \(match.modelID) from \(match.sourceName)", category: .general)
+                } catch {
+                    await self.logger.error("Failed to link model \(match.modelID): \(error)", category: .general)
+                }
+            }
+
+            // Discover Ollama models (network call — may timeout if Ollama not running)
+            await self.ollamaDiscovery.detect()
+            let ollamaModels = await self.ollamaDiscovery.discoveredModels
+            for provider in ollamaModels {
+                await self.providerRegistry.register(provider)
+            }
+
+            // Register commercial providers (network calls to test keys)
+            await self.registerCommercialProviders()
         }
 
-        // Register commercial providers
-        await registerCommercialProviders()
-
-        // Start care model
-        careModelService.start()
+        // Don't start care model on launch — it polls every 5s with AI inference.
+        // User must explicitly enable it in Settings.
     }
 
     private func registerCommercialProviders() async {
         for service in CommercialKeyManager.Service.allCases {
-            guard commercialKeyManager.hasKey(for: service) else { continue }
+            guard await commercialKeyManager.hasKey(for: service) else { continue }
             let result = await commercialKeyManager.testConnection(for: service, depth: .basic)
             guard result.success else { continue }
 
@@ -879,15 +887,15 @@ final class AppState {
                 let provider: any AIProvider
                 switch service {
                 case .claude:
-                    provider = ClaudeProvider(modelID: modelID, name: "Claude: \(modelID)", capabilities: defaultCapabilities.union([.longContext]), keyManager: commercialKeyManager)
+                    provider = ClaudeProvider(modelID: modelID, name: "Claude: \(modelID)", capabilities: defaultCapabilities.union([.longContext]), keyManager: await commercialKeyManager)
                 case .gpt:
-                    provider = GPTProvider(modelID: modelID, name: "GPT: \(modelID)", capabilities: defaultCapabilities, keyManager: commercialKeyManager)
+                    provider = GPTProvider(modelID: modelID, name: "GPT: \(modelID)", capabilities: defaultCapabilities, keyManager: await commercialKeyManager)
                 case .gemini:
-                    provider = GeminiProvider(modelID: modelID, name: "Gemini: \(modelID)", capabilities: defaultCapabilities.union([.fastInference]), keyManager: commercialKeyManager)
+                    provider = GeminiProvider(modelID: modelID, name: "Gemini: \(modelID)", capabilities: defaultCapabilities.union([.fastInference]), keyManager: await commercialKeyManager)
                 case .grok:
-                    provider = GrokProvider(modelID: modelID, name: "Grok: \(modelID)", capabilities: defaultCapabilities, keyManager: commercialKeyManager)
+                    provider = GrokProvider(modelID: modelID, name: "Grok: \(modelID)", capabilities: defaultCapabilities, keyManager: await commercialKeyManager)
                 }
-                providerRegistry.register(provider)
+                await providerRegistry.register(provider)
             }
         }
     }

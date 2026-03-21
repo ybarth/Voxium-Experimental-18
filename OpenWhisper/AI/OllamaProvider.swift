@@ -11,10 +11,12 @@ final class OllamaDiscovery {
     private let ollamaBase = "http://localhost:11434"
 
     func detect() async {
-        // Check if Ollama is running
+        // Check if Ollama is running (short timeout to avoid blocking)
         guard let url = URL(string: "\(ollamaBase)/api/tags") else { return }
         do {
-            let (data, response) = try await URLSession.shared.data(from: url)
+            var request = URLRequest(url: url)
+            request.timeoutInterval = 3  // Don't hang if Ollama isn't running
+            let (data, response) = try await URLSession.shared.data(for: request)
             guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return }
             isInstalled = true
 
