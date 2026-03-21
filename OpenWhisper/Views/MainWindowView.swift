@@ -5,6 +5,7 @@ enum AppTab: String, CaseIterable {
     case home = "Home"
     case settings = "Settings"
     case history = "History"
+    case aiProviders = "AI Providers"
     case chainOfThought = "Chain of Thought"
     case logs = "Logs"
 
@@ -13,6 +14,7 @@ enum AppTab: String, CaseIterable {
         case .home: return "house"
         case .settings: return "gear"
         case .history: return "clock"
+        case .aiProviders: return "cpu"
         case .chainOfThought: return "brain.head.profile"
         case .logs: return "doc.text"
         }
@@ -60,6 +62,8 @@ struct MainWindowView: View {
                         SettingsTabView(appState: appState)
                     case .history:
                         HistoryView(historyStore: appState.historyStore, appState: appState)
+                    case .aiProviders:
+                        AIProvidersSettingsView(appState: appState)
                     case .chainOfThought:
                         ChainOfThoughtView(contextStore: appState.contextStore)
                     case .logs:
@@ -210,7 +214,7 @@ struct MainWindowView: View {
                 .padding(.top, 20)
                 .padding(.bottom, 12)
                 .overlay(alignment: .topTrailing) {
-                    Text("Build 2026.03.20-T")
+                    Text("Build 2026.03.21-U")
                         .font(.system(size: 9))
                         .foregroundStyle(.tertiary)
                         .padding(.trailing, 12)

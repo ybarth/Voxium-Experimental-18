@@ -314,11 +314,6 @@ struct SettingsView: View {
                 )
             }
 
-            Section("AI Providers") {
-                AIProvidersSettingsView(appState: appState)
-                    .frame(height: 500)
-            }
-
             Section {
                 Text("Build 2026.03.20-T")
                     .font(.caption2)
