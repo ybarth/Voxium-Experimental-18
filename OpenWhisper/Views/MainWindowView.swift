@@ -126,7 +126,10 @@ struct MainWindowView: View {
         }
         .onChange(of: selectedTab) { _, newTab in
             appState.currentTab = newTab
-            appState.updateIdlePillVisibility()
+            // Delay pill visibility update to avoid glitching during tab/menu transitions
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                appState.updateIdlePillVisibility()
+            }
         }
         .onDisappear {
             // Auto-accept hotkey changes when window closes
