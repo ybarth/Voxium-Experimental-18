@@ -84,14 +84,14 @@ final class AppState {
     var currentTab: AppTab = .home
 
     /// Whether the pill should be visible based on current state.
-    /// Rules: show if insertion mode is paste or keyPresses, OR if main window is open (except on history tab).
-    /// Hidden if user explicitly dismissed it via setShowIdlePill(false).
+    /// Rules: show if insertion mode is paste or keyPresses, OR if main window is open.
+    /// Hidden when on history tab, or if user explicitly dismissed it.
     var shouldShowIdlePill: Bool {
         guard showIdlePill else { return false }
+        if currentTab == .history && isMainWindowVisible { return false }
         let method = TextInsertionMethod(rawValue: textInsertionMethod) ?? .accessibility
         let isPasteOrKeyPress = method == .paste || method == .keyPresses
-        let mainWindowOpenNotHistory = isMainWindowVisible && currentTab != .history
-        return isPasteOrKeyPress || mainWindowOpenNotHistory
+        return isPasteOrKeyPress || isMainWindowVisible
     }
 
     /// Context captured at recording start for context-aware formatting.
