@@ -57,6 +57,17 @@ final class AppState {
     let echoModeState = EchoModeState()
     private(set) var echoModeController: EchoModeController?
 
+    // MARK: - AI Provider Infrastructure
+
+    let providerRegistry = ProviderRegistry()
+    let taskRouter = TaskRouter()
+    let councilStore = CouncilStore()
+    let councilOrchestrator: CouncilOrchestrator
+    let commercialKeyManager = CommercialKeyManager()
+    let mlxModelManager = MLXModelManager()
+    let ollamaDiscovery = OllamaDiscovery()
+    let careModelService: CareModelService
+
     @ObservationIgnored
     @AppStorage("ttsMode") var ttsMode: String = TTSMode.off.rawValue
 
@@ -100,6 +111,14 @@ final class AppState {
     }
 
     init() {
+        self.councilOrchestrator = CouncilOrchestrator(registry: providerRegistry)
+        self.careModelService = CareModelService(
+            registry: providerRegistry,
+            taskRouter: taskRouter,
+            historyStore: historyStore,
+            cursorPositionService: cursorPositionService
+        )
+
         overlayController = OverlayController(appState: self)
 
         // Register both toggle and push-to-talk hotkeys
@@ -167,6 +186,10 @@ final class AppState {
         }
 
         logger.info("AppState initialized", category: .general)
+
+        Task {
+            await setupAIProviders()
+        }
     }
 
     func toggleRecording() async {
@@ -788,6 +811,52 @@ final class AppState {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) { [weak self] in
             self?.speechifyService.triggerRead()
             self?.logger.info("Echo Mode (AX): triggered Speechify for entry \(entry.id)", category: .tts)
+        }
+    }
+
+    // MARK: - AI Setup
+
+    private func setupAIProviders() async {
+        // Register MLX providers
+        for provider in mlxModelManager.createProviders() {
+            providerRegistry.register(provider)
+        }
+
+        // Discover Ollama models
+        await ollamaDiscovery.detect()
+        for provider in ollamaDiscovery.discoveredModels {
+            providerRegistry.register(provider)
+        }
+
+        // Register commercial providers
+        await registerCommercialProviders()
+
+        // Start care model
+        careModelService.start()
+    }
+
+    private func registerCommercialProviders() async {
+        for service in CommercialKeyManager.Service.allCases {
+            guard commercialKeyManager.hasKey(for: service) else { continue }
+            let result = await commercialKeyManager.testConnection(for: service, depth: .basic)
+            guard result.success else { continue }
+
+            let defaultCapabilities: Set<AICapability> = [.reasoning, .creativity, .editorialAnalysis, .codeGeneration, .multilingual]
+
+            for modelID in result.accessibleModels {
+                let provider: any AIProvider
+                switch service {
+                case .claude:
+                    provider = ClaudeProvider(modelID: modelID, name: "Claude: \(modelID)", capabilities: defaultCapabilities.union([.longContext]), keyManager: commercialKeyManager)
+                case .gpt:
+                    provider = GPTProvider(modelID: modelID, name: "GPT: \(modelID)", capabilities: defaultCapabilities, keyManager: commercialKeyManager)
+                case .gemini:
+                    provider = GeminiProvider(modelID: modelID, name: "Gemini: \(modelID)", capabilities: defaultCapabilities.union([.fastInference]), keyManager: commercialKeyManager)
+                case .grok:
+                    provider = GrokProvider(modelID: modelID, name: "Grok: \(modelID)", capabilities: defaultCapabilities, keyManager: commercialKeyManager)
+                }
+                providerRegistry.register(provider)
+            }
         }
     }
 }
