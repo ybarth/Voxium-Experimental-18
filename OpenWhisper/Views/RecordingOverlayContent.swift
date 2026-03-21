@@ -113,6 +113,12 @@ struct RecordingOverlayContent: View {
                 Button("History") {
                     appState.showTab(.history)
                 }
+
+                Divider()
+
+                Button("Hide Mini Dock") {
+                    appState.setShowIdlePill(false)
+                }
             }
     }
 

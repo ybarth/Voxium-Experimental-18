@@ -124,6 +124,10 @@ struct MainWindowView: View {
                 appState.desiredTab = nil
             }
         }
+        .onChange(of: selectedTab) { _, newTab in
+            appState.currentTab = newTab
+            appState.updateIdlePillVisibility()
+        }
         .onDisappear {
             // Auto-accept hotkey changes when window closes
             if selectedTab == .settings {

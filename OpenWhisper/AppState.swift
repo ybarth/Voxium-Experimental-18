@@ -80,6 +80,20 @@ final class AppState {
     /// Whether the main app window is currently visible.
     var isMainWindowVisible: Bool = false
 
+    /// The currently selected tab in the main window (synced from MainWindowView).
+    var currentTab: AppTab = .home
+
+    /// Whether the pill should be visible based on current state.
+    /// Rules: show if insertion mode is paste or keyPresses, OR if main window is open (except on history tab).
+    /// Hidden if user explicitly dismissed it via setShowIdlePill(false).
+    var shouldShowIdlePill: Bool {
+        guard showIdlePill else { return false }
+        let method = TextInsertionMethod(rawValue: textInsertionMethod) ?? .accessibility
+        let isPasteOrKeyPress = method == .paste || method == .keyPresses
+        let mainWindowOpenNotHistory = isMainWindowVisible && currentTab != .history
+        return isPasteOrKeyPress || mainWindowOpenNotHistory
+    }
+
     /// Context captured at recording start for context-aware formatting.
     private var currentContext: AccessibilityContext?
 
@@ -155,7 +169,7 @@ final class AppState {
         syncCancelRecordingHotkey()
 
         // Show idle pill on launch
-        if showIdlePill {
+        if shouldShowIdlePill {
             overlayController?.showIdlePill()
         }
 
@@ -181,6 +195,7 @@ final class AppState {
             guard let self else { return }
             Task { @MainActor in
                 self.updateMainWindowVisibility()
+                self.updateIdlePillVisibility()
                 self.updateEchoModePanel()
             }
         }
@@ -220,7 +235,7 @@ final class AppState {
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             guard let self else { return }
-            if self.showIdlePill {
+            if self.shouldShowIdlePill {
                 self.overlayState.phase = .idle
                 self.overlayController?.updateForPhase(.idle)
             } else {
@@ -244,7 +259,13 @@ final class AppState {
 
     func setShowIdlePill(_ show: Bool) {
         showIdlePill = show
-        if show {
+        updateIdlePillVisibility()
+    }
+
+    /// Re-evaluates whether the pill should be visible based on current state.
+    /// Call this when main window visibility, current tab, or insertion method changes.
+    func updateIdlePillVisibility() {
+        if shouldShowIdlePill {
             if overlayState.phase == .hidden {
                 overlayState.phase = .idle
                 overlayController?.updateForPhase(.idle)
@@ -302,7 +323,7 @@ final class AppState {
                     DispatchQueue.main.asyncAfter(deadline: .now() + 2.0) { [weak self] in
                         guard let self else { return }
                         guard self.overlayState.phase == .modelDownloading else { return }
-                        if self.showIdlePill {
+                        if self.shouldShowIdlePill {
                             self.overlayState.phase = .idle
                             self.overlayController?.updateForPhase(.idle)
                         } else {
@@ -397,7 +418,7 @@ final class AppState {
 
         guard !samples.isEmpty else {
             statusMessage = "No audio captured"
-            if showIdlePill {
+            if shouldShowIdlePill {
                 overlayState.phase = .idle
                 overlayController?.updateForPhase(.idle)
             } else {
@@ -421,7 +442,7 @@ final class AppState {
                 guard let modelURL = modelManager.modelFileURL else {
                     statusMessage = "Model not available"
                     isTranscribing = false
-                    if showIdlePill {
+                    if shouldShowIdlePill {
                         overlayState.phase = .idle
                         overlayController?.updateForPhase(.idle)
                     } else {
@@ -559,7 +580,7 @@ final class AppState {
         }
 
         isTranscribing = false
-        if showIdlePill {
+        if shouldShowIdlePill {
             overlayState.phase = .idle
             overlayController?.updateForPhase(.idle)
         } else {

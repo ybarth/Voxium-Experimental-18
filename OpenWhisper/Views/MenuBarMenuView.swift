@@ -31,6 +31,12 @@ struct MenuBarMenuView: View {
             AppState.showMainWindow()
         }
 
+        if !appState.shouldShowIdlePill {
+            Button("Show Mini Dock") {
+                appState.setShowIdlePill(true)
+            }
+        }
+
         Divider()
 
         Button("Quit OpenWhisper") {
