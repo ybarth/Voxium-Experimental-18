@@ -2,6 +2,8 @@ import SwiftUI
 
 struct LocalModelsSettingsView: View {
     let appState: AppState
+    @State private var showScanResult = false
+    @State private var scanResultMessage: String?
 
     private var registry: ProviderRegistry { appState.providerRegistry }
     private var mlxManager: MLXModelManager { appState.mlxModelManager }
@@ -49,6 +51,26 @@ struct LocalModelsSettingsView: View {
                     }
                 }
                 .padding(.vertical, 4)
+            }
+
+            // Scan for existing models
+            Button("Scan for Existing Models") {
+                let matches = mlxManager.downloadManager.scanForExistingModels(catalog: MLXModelManager.catalog)
+                for match in matches {
+                    try? mlxManager.downloadManager.linkExternalModel(match)
+                }
+                scanResultMessage = matches.isEmpty
+                    ? "No existing models found on this device."
+                    : "Found and linked \(matches.count) model(s) from other tools."
+                showScanResult = true
+            }
+            .font(.caption)
+
+            if showScanResult, let message = scanResultMessage {
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .padding(.bottom, 4)
             }
 
             // Model list

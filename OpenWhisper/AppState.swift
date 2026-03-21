@@ -838,6 +838,17 @@ final class AppState {
     // MARK: - AI Setup
 
     private func setupAIProviders() async {
+        // Scan for models already on disk from other tools (HuggingFace cache, LM Studio)
+        let existingModels = mlxModelManager.downloadManager.scanForExistingModels(catalog: MLXModelManager.catalog)
+        for match in existingModels {
+            do {
+                try mlxModelManager.downloadManager.linkExternalModel(match)
+                logger.info("Linked existing model \(match.modelID) from \(match.sourceName)", category: .general)
+            } catch {
+                logger.error("Failed to link model \(match.modelID): \(error)", category: .general)
+            }
+        }
+
         // Register MLX providers
         for provider in mlxModelManager.createProviders() {
             providerRegistry.register(provider)
