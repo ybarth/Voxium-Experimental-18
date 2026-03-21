@@ -17,6 +17,9 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: "2.8.1"
+  mlx-swift-lm:
+    url: https://github.com/ml-explore/mlx-swift-lm
+    branch: main
 
 targets:
   OpenWhisper:
@@ -44,6 +47,8 @@ targets:
       - package: SwiftWhisper
       - package: KeyboardShortcuts
       - package: Sparkle
+      - package: mlx-swift-lm
+        product: MLXLLM
     info:
       path: OpenWhisper/Info.plist
       properties:
