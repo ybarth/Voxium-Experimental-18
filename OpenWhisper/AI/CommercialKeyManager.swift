@@ -6,11 +6,18 @@ import SwiftUI
 @Observable
 final class CommercialKeyManager {
 
+    enum ServiceCategory: String, CaseIterable, Sendable {
+        case llmProviders = "LLM Providers"
+        case cloudVoiceModels = "Cloud Voice Models"
+    }
+
     enum Service: String, CaseIterable, Sendable {
         case claude = "com.openwhisper.api.claude"
         case gpt = "com.openwhisper.api.gpt"
         case gemini = "com.openwhisper.api.gemini"
         case grok = "com.openwhisper.api.grok"
+        case deepgram = "com.openwhisper.api.deepgram"
+        case cartesia = "com.openwhisper.api.cartesia"
 
         var displayName: String {
             switch self {
@@ -18,6 +25,8 @@ final class CommercialKeyManager {
             case .gpt: return "GPT (OpenAI)"
             case .gemini: return "Gemini (Google)"
             case .grok: return "Grok (xAI)"
+            case .deepgram: return "Deepgram"
+            case .cartesia: return "Cartesia"
             }
         }
 
@@ -27,6 +36,8 @@ final class CommercialKeyManager {
             case .gpt: return "^sk-.+"
             case .gemini: return "^AI.+"
             case .grok: return "^xai-.+"
+            case .deepgram: return "^.{8,}"  // Deepgram keys are opaque tokens
+            case .cartesia: return "^.{8,}"  // Cartesia keys are opaque tokens
             }
         }
 
@@ -36,7 +47,20 @@ final class CommercialKeyManager {
             case .gpt: return URL(string: "https://platform.openai.com/api-keys")
             case .gemini: return URL(string: "https://aistudio.google.com/apikey")
             case .grok: return URL(string: "https://console.x.ai")
+            case .deepgram: return URL(string: "https://console.deepgram.com")
+            case .cartesia: return URL(string: "https://play.cartesia.ai/keys")
             }
+        }
+
+        var category: ServiceCategory {
+            switch self {
+            case .claude, .gpt, .gemini, .grok: return .llmProviders
+            case .deepgram, .cartesia: return .cloudVoiceModels
+            }
+        }
+
+        static func services(in category: ServiceCategory) -> [Service] {
+            allCases.filter { $0.category == category }
         }
     }
 
@@ -214,6 +238,16 @@ final class CommercialKeyManager {
                 URL(string: "https://api.x.ai/v1/models")!,
                 ["Authorization": "Bearer \(key)"]
             )
+        case .deepgram:
+            return (
+                URL(string: "https://api.deepgram.com/v1/models")!,
+                ["Authorization": "Token \(key)"]
+            )
+        case .cartesia:
+            return (
+                URL(string: "https://api.cartesia.ai/voices")!,
+                ["X-API-Key": key, "Cartesia-Version": "2024-06-10"]
+            )
         }
     }
 
@@ -226,6 +260,11 @@ final class CommercialKeyManager {
         case .gemini:
             guard let models = json["models"] as? [[String: Any]] else { return [] }
             return models.compactMap { $0["name"] as? String }
+        case .deepgram:
+            guard let models = json["stt"] as? [[String: Any]] else { return ["nova-2", "nova-2-general"] }
+            return models.compactMap { $0["name"] as? String }
+        case .cartesia:
+            return ["sonic-2", "sonic-turbo"]
         }
     }
 

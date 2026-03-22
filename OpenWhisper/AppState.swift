@@ -84,14 +84,24 @@ final class AppState {
     var currentTab: AppTab = .home
 
     /// Whether the pill should be visible based on current state.
-    /// Rules: show if insertion mode is paste or keyPresses, OR if main window is open.
-    /// Hidden when on history tab, or if user explicitly dismissed it.
+    /// Rules:
+    /// - Show when insertion mode is paste or key presses (not accessibility API)
+    /// - If insertion is paste/keyPresses AND TTS is speechify: show at all times EXCEPT history tab
+    /// - Hide when on history tab of the main window
+    /// - Hide if user explicitly dismissed it
     var shouldShowIdlePill: Bool {
         guard showIdlePill else { return false }
-        if currentTab == .history && isMainWindowVisible { return false }
         let method = TextInsertionMethod(rawValue: textInsertionMethod) ?? .accessibility
         let isPasteOrKeyPress = method == .paste || method == .keyPresses
-        return isPasteOrKeyPress || isMainWindowVisible
+
+        // Accessibility API mode: pill is hidden
+        guard isPasteOrKeyPress else { return false }
+
+        // History tab hides the pill
+        if currentTab == .history && isMainWindowVisible { return false }
+
+        // Paste/key press mode: always show
+        return true
     }
 
     /// Context captured at recording start for context-aware formatting.
@@ -894,6 +904,9 @@ final class AppState {
                     provider = GeminiProvider(modelID: modelID, name: "Gemini: \(modelID)", capabilities: defaultCapabilities.union([.fastInference]), keyManager: await commercialKeyManager)
                 case .grok:
                     provider = GrokProvider(modelID: modelID, name: "Grok: \(modelID)", capabilities: defaultCapabilities, keyManager: await commercialKeyManager)
+                case .deepgram, .cartesia:
+                    // Voice services — registered for key validation but not as LLM providers
+                    continue
                 }
                 await providerRegistry.register(provider)
             }

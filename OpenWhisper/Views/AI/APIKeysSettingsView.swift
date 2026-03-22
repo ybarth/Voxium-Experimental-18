@@ -4,9 +4,16 @@ struct APIKeysSettingsView: View {
     let appState: AppState
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            ForEach(CommercialKeyManager.Service.allCases, id: \.self) { service in
-                APIKeyServiceSection(service: service, keyManager: appState.commercialKeyManager)
+        VStack(alignment: .leading, spacing: 20) {
+            ForEach(CommercialKeyManager.ServiceCategory.allCases, id: \.self) { category in
+                VStack(alignment: .leading, spacing: 12) {
+                    Text(category.rawValue)
+                        .font(.headline)
+
+                    ForEach(CommercialKeyManager.Service.services(in: category), id: \.self) { service in
+                        APIKeyServiceSection(service: service, keyManager: appState.commercialKeyManager)
+                    }
+                }
             }
         }
     }

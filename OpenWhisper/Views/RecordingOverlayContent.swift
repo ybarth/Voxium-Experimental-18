@@ -41,6 +41,9 @@ struct RecordingOverlayContent: View {
                     .fill(.ultraThinMaterial)
                     .environment(\.colorScheme, .dark)
             }
+            .onTapGesture {
+                AppState.showMainWindow()
+            }
             .contextMenu {
                 if let lastEntry = appState.historyStore.entries.first {
                     Button("Paste Last Dictation") {
@@ -73,6 +76,28 @@ struct RecordingOverlayContent: View {
                         ForEach(devices) { device in
                             Text(device.name).tag(device.uid)
                         }
+                    }
+                }
+
+                Menu("Processing Model") {
+                    // Local transcription models
+                    Picker("Transcription", selection: Binding(
+                        get: { appState.modelManager.selectedModel },
+                        set: { appState.onModelChanged($0) }
+                    )) {
+                        ForEach(TranscriptionModel.allCases, id: \.self) { model in
+                            Text(model.displayName).tag(model)
+                        }
+                    }
+
+                    // Cloud models (if API keys configured)
+                    if appState.commercialKeyManager.hasKey(for: .gpt) {
+                        Divider()
+                        Text("OpenAI (via API key)").font(.caption)
+                    }
+                    if appState.commercialKeyManager.hasKey(for: .gemini) {
+                        if !appState.commercialKeyManager.hasKey(for: .gpt) { Divider() }
+                        Text("Gemini (via API key)").font(.caption)
                     }
                 }
 
