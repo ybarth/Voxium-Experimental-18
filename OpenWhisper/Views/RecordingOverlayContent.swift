@@ -31,8 +31,8 @@ struct RecordingOverlayContent: View {
 
     // MARK: - Idle pill with context menu
 
-    private var hasGPTKey: Bool { appState.commercialKeyManager.hasKey(for: .gpt) }
-    private var hasGeminiKey: Bool { appState.commercialKeyManager.hasKey(for: .gemini) }
+    private var hasGPTKey: Bool { appState.commercialKeyManager.configuredServices.contains(.gpt) }
+    private var hasGeminiKey: Bool { appState.commercialKeyManager.configuredServices.contains(.gemini) }
 
     private var idleView: some View {
         Image(systemName: "mic.fill")

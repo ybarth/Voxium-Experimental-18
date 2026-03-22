@@ -129,6 +129,7 @@ final class AppState {
     }
 
     init() {
+        commercialKeyManager.refreshConfiguredServices()
         self.councilOrchestrator = CouncilOrchestrator(registry: providerRegistry)
         self.careModelService = CareModelService(
             registry: providerRegistry,

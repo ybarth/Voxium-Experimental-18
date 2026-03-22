@@ -84,7 +84,21 @@ final class CommercialKeyManager {
     /// Incremented on key save/delete so SwiftUI views that depend on key presence re-render.
     var keysVersion: Int = 0
 
+    /// Observable cache of which services have keys configured.
+    /// Updated on save/delete — views should read this instead of calling hasKey() directly.
+    var configuredServices: Set<Service> = []
+
     // MARK: - Keychain Operations
+
+    func refreshConfiguredServices() {
+        var result: Set<Service> = []
+        for service in Service.allCases {
+            if getKey(for: service) != nil {
+                result.insert(service)
+            }
+        }
+        configuredServices = result
+    }
 
     func saveKey(_ key: String, for service: Service) throws {
         let data = Data(key.utf8)
@@ -105,6 +119,7 @@ final class CommercialKeyManager {
             throw KeychainError.saveFailed(status)
         }
         keysVersion += 1
+        configuredServices.insert(service)
     }
 
     func getKey(for service: Service) -> String? {
@@ -130,6 +145,7 @@ final class CommercialKeyManager {
         ]
         SecItemDelete(query as CFDictionary)
         keysVersion += 1
+        configuredServices.remove(service)
     }
 
     func hasKey(for service: Service) -> Bool {
