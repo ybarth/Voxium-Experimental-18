@@ -31,6 +31,9 @@ struct RecordingOverlayContent: View {
 
     // MARK: - Idle pill with context menu
 
+    private var hasGPTKey: Bool { appState.commercialKeyManager.hasKey(for: .gpt) }
+    private var hasGeminiKey: Bool { appState.commercialKeyManager.hasKey(for: .gemini) }
+
     private var idleView: some View {
         Image(systemName: "mic.fill")
             .font(.system(size: 16))
@@ -41,6 +44,7 @@ struct RecordingOverlayContent: View {
                     .fill(.ultraThinMaterial)
                     .environment(\.colorScheme, .dark)
             }
+            .id("pill-\(appState.commercialKeyManager.keysVersion)")
             .onTapGesture {
                 AppState.showMainWindow()
             }
@@ -90,15 +94,14 @@ struct RecordingOverlayContent: View {
                         }
                     }
 
-                    // Cloud models (reactive to key changes via keysVersion)
-                    let _ = appState.commercialKeyManager.keysVersion
-                    if appState.commercialKeyManager.hasKey(for: .gpt) {
+                    // Cloud models
+                    if hasGPTKey {
                         Divider()
-                        Text("OpenAI (via API key)").font(.caption)
+                        Text("OpenAI (via API key)")
                     }
-                    if appState.commercialKeyManager.hasKey(for: .gemini) {
-                        if !appState.commercialKeyManager.hasKey(for: .gpt) { Divider() }
-                        Text("Gemini (via API key)").font(.caption)
+                    if hasGeminiKey {
+                        if !hasGPTKey { Divider() }
+                        Text("Gemini (via API key)")
                     }
                 }
 
