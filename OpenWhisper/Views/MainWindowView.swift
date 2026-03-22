@@ -71,9 +71,7 @@ struct MainWindowView: View {
                     case .logs:
                         LogsView(logger: TranscriptionLogger.shared)
                     case .dictionary:
-                        Text("Dictionary")
-                            .font(.title2)
-                            .foregroundStyle(.secondary)
+                        DictionaryView(appState: appState)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
