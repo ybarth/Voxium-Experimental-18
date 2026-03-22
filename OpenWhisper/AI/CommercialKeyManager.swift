@@ -81,6 +81,9 @@ final class CommercialKeyManager {
     @ObservationIgnored
     @AppStorage("connectionTestDepth") var defaultDepth: String = ValidationDepth.guided.rawValue
 
+    /// Incremented on key save/delete so SwiftUI views that depend on key presence re-render.
+    var keysVersion: Int = 0
+
     // MARK: - Keychain Operations
 
     func saveKey(_ key: String, for service: Service) throws {
@@ -101,6 +104,7 @@ final class CommercialKeyManager {
         guard status == errSecSuccess else {
             throw KeychainError.saveFailed(status)
         }
+        keysVersion += 1
     }
 
     func getKey(for service: Service) -> String? {
@@ -125,6 +129,7 @@ final class CommercialKeyManager {
             kSecAttrAccount as String: "api-key",
         ]
         SecItemDelete(query as CFDictionary)
+        keysVersion += 1
     }
 
     func hasKey(for service: Service) -> Bool {

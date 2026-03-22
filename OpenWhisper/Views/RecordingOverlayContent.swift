@@ -90,7 +90,8 @@ struct RecordingOverlayContent: View {
                         }
                     }
 
-                    // Cloud models (if API keys configured)
+                    // Cloud models (reactive to key changes via keysVersion)
+                    let _ = appState.commercialKeyManager.keysVersion
                     if appState.commercialKeyManager.hasKey(for: .gpt) {
                         Divider()
                         Text("OpenAI (via API key)").font(.caption)
