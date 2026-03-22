@@ -243,7 +243,7 @@ final class InferenceServerManager {
     }
 
     /// Send audio to the server for transcription.
-    func transcribe(audioFrames: [Float]) async throws -> ServerTranscriptionResponse {
+    func transcribe(audioFrames: [Float], initialPrompt: String? = nil) async throws -> ServerTranscriptionResponse {
         guard case .running = state else {
             throw InferenceError.serverNotRunning
         }
@@ -260,7 +260,10 @@ final class InferenceServerManager {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
 
-        let body: [String: Any] = ["audio": base64Audio, "sample_rate": 16000]
+        var body: [String: Any] = ["audio": base64Audio, "sample_rate": 16000]
+        if let prompt = initialPrompt, !prompt.isEmpty {
+            body["initial_prompt"] = prompt
+        }
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
         let (responseData, response) = try await URLSession.shared.data(for: request)

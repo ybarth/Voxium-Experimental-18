@@ -40,6 +40,7 @@ final class AppState {
     let serverManager = InferenceServerManager()
     let cursorPositionService = CursorPositionService()
     let contextStore = AccessibilityContextStore()
+    let dictionaryManager = DictionaryManager()
     let logger = TranscriptionLogger.shared
     private(set) var overlayController: OverlayController?
 
@@ -176,6 +177,13 @@ final class AppState {
             }
         }
 
+        KeyboardShortcuts.onKeyUp(for: .addToDictionary) { [weak self] in
+            guard let self else { return }
+            Task { @MainActor in
+                self.handleAddToDictionary()
+            }
+        }
+
         syncCancelRecordingHotkey()
 
         // Show idle pill on launch
@@ -292,6 +300,31 @@ final class AppState {
     func showTab(_ tab: AppTab) {
         desiredTab = tab
         Self.showMainWindow()
+    }
+
+    // MARK: - Dictionary
+
+    func handleAddToDictionary() {
+        // Capture selected text from the active app
+        let context = cursorPositionService.captureContext()
+        let selectedText = context.selectedText?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        let mode = UserDefaults.standard.string(forKey: "dictionaryAddWordMode") ?? "fullWindow"
+
+        switch mode {
+        case "quickPopup":
+            // TODO: Open quick popup panel with selectedText pre-filled
+            // For now, fall through to full window
+            showTab(.dictionary)
+        case "inlineOverlay":
+            // TODO: Use overlay for inline capture
+            showTab(.dictionary)
+        default: // "fullWindow"
+            showTab(.dictionary)
+        }
+
+        // Store the selected text so the dictionary view can pick it up
+        dictionaryManager.pendingWordToAdd = selectedText.isEmpty ? nil : selectedText
     }
 
     // MARK: - Settings confirmation
@@ -448,6 +481,20 @@ final class AppState {
         do {
             let result: TranscriptionResult
 
+            // Build prompt combining dictionary words with any user system prompt
+            let dictionaryWords = dictionaryManager.relevantWords(for: currentContext)
+            let dictionaryPrompt = dictionaryWords.isEmpty ? nil : dictionaryWords.joined(separator: ", ")
+            let combinedPrompt: String?
+            if let dictPrompt = dictionaryPrompt {
+                if !systemPrompt.isEmpty {
+                    combinedPrompt = "\(dictPrompt). \(systemPrompt)"
+                } else {
+                    combinedPrompt = dictPrompt
+                }
+            } else {
+                combinedPrompt = systemPrompt.isEmpty ? nil : systemPrompt
+            }
+
             if modelManager.selectedModel.backend == .whisperCpp {
                 guard let modelURL = modelManager.modelFileURL else {
                     statusMessage = "Model not available"
@@ -463,12 +510,14 @@ final class AppState {
                 }
                 result = try await transcriptionService.transcribe(
                     audioFrames: samples,
-                    modelURL: modelURL
+                    modelURL: modelURL,
+                    initialPrompt: combinedPrompt
                 )
             } else {
                 result = try await transcriptionService.transcribe(
                     audioFrames: samples,
-                    using: serverManager
+                    using: serverManager,
+                    initialPrompt: combinedPrompt
                 )
             }
 
@@ -476,13 +525,16 @@ final class AppState {
                 statusMessage = "No speech detected"
                 logger.info("No speech detected in audio", category: .transcription)
             } else {
+                // Apply dictionary post-processing correction
+                let correctedText = dictionaryManager.correctTranscription(result.text)
+
                 // Apply context-aware formatting
-                let formattedText = ContextAwareFormatter.format(result.text, context: currentContext)
+                let formattedText = ContextAwareFormatter.format(correctedText, context: currentContext)
 
                 // Update Chain of Thought with formatting details
                 if let ctx = currentContext {
-                    let diff = formattedText != result.text
-                        ? "Raw: \"\(result.text.prefix(60))\" -> Formatted: \"\(formattedText.prefix(60))\""
+                    let diff = formattedText != correctedText
+                        ? "Raw: \"\(correctedText.prefix(60))\" -> Formatted: \"\(formattedText.prefix(60))\""
                         : "No changes applied"
                     contextStore.recordContext(ctx, formattingApplied: diff)
                 }
@@ -554,7 +606,7 @@ final class AppState {
                 let trimmedDurationMs = Int(Double(trimResult.samples.count) / 16000 * 1000)
                 let entry = TranscriptionEntry(
                     id: entryID,
-                    text: result.text,
+                    text: correctedText,
                     audioFilename: audioFilename,
                     wordTimestamps: adjustedTimestamps,
                     durationMs: trimmedDurationMs,
@@ -569,6 +621,12 @@ final class AppState {
                     bundleIdentifier: currentContext?.bundleIdentifier
                 )
                 historyStore.addEntry(entry)
+
+                // Update dictionary usage statistics
+                dictionaryManager.updateUsageStats(
+                    transcribedText: correctedText,
+                    bundleIdentifier: currentContext?.bundleIdentifier
+                )
 
                 // Trigger Echo Mode read-aloud if active
                 if let axResult = axInsertionResult, case .success(let element, let range) = axResult {

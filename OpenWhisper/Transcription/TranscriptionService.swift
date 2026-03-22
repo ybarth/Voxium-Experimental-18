@@ -52,11 +52,11 @@ final class TranscriptionService {
 
     // MARK: - Server transcription
 
-    func transcribe(audioFrames: [Float], using server: InferenceServerManager) async throws -> TranscriptionResult {
+    func transcribe(audioFrames: [Float], using server: InferenceServerManager, initialPrompt: String? = nil) async throws -> TranscriptionResult {
         logger.info("Starting server transcription (\(audioFrames.count) frames, \(String(format: "%.1f", Double(audioFrames.count) / 16000))s audio)", category: .transcription)
         let start = CFAbsoluteTimeGetCurrent()
 
-        let response = try await server.transcribe(audioFrames: audioFrames)
+        let response = try await server.transcribe(audioFrames: audioFrames, initialPrompt: initialPrompt)
         let filtered = filterTranscription(response.text)
         let durationMs = Int(Double(audioFrames.count) / 16000 * 1000)
 

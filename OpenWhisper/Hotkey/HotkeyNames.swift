@@ -12,4 +12,6 @@ extension KeyboardShortcuts.Name {
         "cancelRecording",
         default: .init(.escape)
     )
+
+    static let addToDictionary = Self("addToDictionary")
 }
