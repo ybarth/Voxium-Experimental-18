@@ -1,6 +1,22 @@
 import SwiftUI
 import KeyboardShortcuts
 
+// MARK: - Dictionary add-word mode
+
+enum DictionaryAddWordMode: String, CaseIterable {
+    case quickPopup = "quickPopup"
+    case fullWindow = "fullWindow"
+    case inlineOverlay = "inlineOverlay"
+
+    var displayName: String {
+        switch self {
+        case .quickPopup: return "Quick Pop-up"
+        case .fullWindow: return "Full Dictionary Window"
+        case .inlineOverlay: return "Inline Overlay"
+        }
+    }
+}
+
 struct SettingsTabView: View {
     let appState: AppState
     @State private var micAuthorized = Permissions.isMicrophoneAuthorized
@@ -9,6 +25,12 @@ struct SettingsTabView: View {
     @AppStorage("ttsMode") private var ttsMode: String = TTSMode.off.rawValue
     @AppStorage("echoModeEnabled") private var echoModeEnabled: Bool = false
     @AppStorage("echoModeDockPosition") private var echoModeDockPosition: String = DockPosition.bottom.rawValue
+
+    // Dictionary settings
+    @AppStorage("dictionaryAddWordMode") private var dictionaryAddWordMode: String = DictionaryAddWordMode.quickPopup.rawValue
+    @AppStorage("dictionaryDefaultSpellingMode") private var dictionaryDefaultSpellingMode: String = PhoneticMethod.regular.rawValue
+    @AppStorage("dictionaryTier1MaxSize") private var dictionaryTier1MaxSize: Int = 100
+    @AppStorage("dictionaryPromptBudget") private var dictionaryPromptBudget: Int = 200
 
     private let permissionTimer = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
 
@@ -24,6 +46,48 @@ struct SettingsTabView: View {
                 LabeledContent("Cancel Recording") {
                     ShortcutRecorder(name: .cancelRecording)
                 }
+            }
+
+            Section("Dictionary") {
+                LabeledContent("Add Word Hotkey") {
+                    ShortcutRecorder(name: .addToDictionary)
+                }
+
+                Picker("Add-Word Mode", selection: Binding(
+                    get: { DictionaryAddWordMode(rawValue: dictionaryAddWordMode) ?? .quickPopup },
+                    set: { dictionaryAddWordMode = $0.rawValue }
+                )) {
+                    ForEach(DictionaryAddWordMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+
+                Picker("Default Spelling Mode", selection: Binding(
+                    get: { PhoneticMethod(rawValue: dictionaryDefaultSpellingMode) ?? .regular },
+                    set: { dictionaryDefaultSpellingMode = $0.rawValue }
+                )) {
+                    ForEach(PhoneticMethod.allCases, id: \.self) { method in
+                        Text(method.displayName).tag(method)
+                    }
+                }
+
+                Stepper(
+                    "Tier 1 Max Size: \(dictionaryTier1MaxSize)",
+                    value: $dictionaryTier1MaxSize,
+                    in: 10...500,
+                    step: 10
+                )
+
+                Stepper(
+                    "Prompt Budget: \(dictionaryPromptBudget)",
+                    value: $dictionaryPromptBudget,
+                    in: 50...1000,
+                    step: 50
+                )
+
+                Text("Tier 1 words are always injected into the transcription prompt. The prompt budget limits total words across all tiers.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             Section("Overlay") {
