@@ -8,6 +8,7 @@ enum AppTab: String, CaseIterable {
     case aiProviders = "AI Providers"
     case chainOfThought = "Chain of Thought"
     case logs = "Logs"
+    case dictionary = "Dictionary"
 
     var icon: String {
         switch self {
@@ -17,6 +18,7 @@ enum AppTab: String, CaseIterable {
         case .aiProviders: return "cpu"
         case .chainOfThought: return "brain.head.profile"
         case .logs: return "doc.text"
+        case .dictionary: return "character.book.closed"
         }
     }
 }
@@ -68,6 +70,10 @@ struct MainWindowView: View {
                         ChainOfThoughtView(contextStore: appState.contextStore)
                     case .logs:
                         LogsView(logger: TranscriptionLogger.shared)
+                    case .dictionary:
+                        Text("Dictionary")
+                            .font(.title2)
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -11,6 +11,10 @@ final class DictionaryManager {
     private var soundexIndex: [String: [DictionaryEntry]] = [:]
     private var metaphoneIndex: [String: [DictionaryEntry]] = [:]
 
+    /// Selected text captured when the user triggers the "add to dictionary" hotkey.
+    /// The dictionary view reads this to pre-fill the word input field.
+    var pendingWordToAdd: String?
+
     private let store: DictionaryStore
 
     @ObservationIgnored
