@@ -86,22 +86,15 @@ final class AppState {
 
     /// Whether the pill should be visible based on current state.
     /// Rules:
-    /// - Show when insertion mode is paste or key presses (not accessibility API)
-    /// - If insertion is paste/keyPresses AND TTS is speechify: show at all times EXCEPT history tab
+    /// - Always show if user hasn't dismissed it (showIdlePill = true)
     /// - Hide when on history tab of the main window
-    /// - Hide if user explicitly dismissed it
+    /// - Hide if user explicitly dismissed it via "Hide Mini Dock"
     var shouldShowIdlePill: Bool {
         guard showIdlePill else { return false }
-        let method = TextInsertionMethod(rawValue: textInsertionMethod) ?? .accessibility
-        let isPasteOrKeyPress = method == .paste || method == .keyPresses
-
-        // Accessibility API mode: pill is hidden
-        guard isPasteOrKeyPress else { return false }
 
         // History tab hides the pill
         if currentTab == .history && isMainWindowVisible { return false }
 
-        // Paste/key press mode: always show
         return true
     }
 
